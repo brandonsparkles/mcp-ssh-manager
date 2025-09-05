@@ -46,6 +46,7 @@
     "@modelcontextprotocol/sdk": "^1.17.2",
     "dotenv": "^16.4.5",
     "node-ssh": "^13.2.0",
+    "uuid": "^11.1.0",
     "zod": "^3.25.76"
   },
   "devDependencies": {

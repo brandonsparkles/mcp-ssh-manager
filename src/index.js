@@ -39,6 +39,13 @@ import {
   getActiveProfileName
 } from './profile-loader.js';
 import { logger } from './logger.js';
+import {
+  createSession,
+  getSession,
+  listSessions,
+  closeSession,
+  SESSION_STATES
+} from './session-manager.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -1042,6 +1049,279 @@ server.registerTool(
     }
   }
 );
+
+// SSH Session Management Tools
+
+server.registerTool(
+  'ssh_session_start',
+  {
+    description: 'Start a persistent SSH session that maintains state and context',
+    inputSchema: {
+      server: z.string().describe('Server name from configuration'),
+      name: z.string().optional().describe('Optional session name for identification')
+    }
+  },
+  async ({ server: serverName, name }) => {
+    try {
+      const ssh = await getConnection(serverName);
+      const session = await createSession(serverName, ssh);
+      
+      const sessionName = name || `Session on ${serverName}`;
+      
+      logger.info('SSH session started', {
+        id: session.id,
+        server: serverName,
+        name: sessionName
+      });
+      
+      return {
+        content: [
+          {
+            type: 'text',
+            text: `🚀 SSH Session Started\n\nSession ID: ${session.id}\nServer: ${serverName}\nName: ${sessionName}\nState: ${session.state}\nWorking Directory: ${session.context.cwd}\n\nUse ssh_session_send to execute commands in this session.\nUse ssh_session_close to terminate the session.`
+          }
+        ]
+      };
+    } catch (error) {
+      logger.error('Failed to start SSH session', {
+        server: serverName,
+        error: error.message
+      });
+      
+      return {
+        content: [
+          {
+            type: 'text',
+            text: `❌ Failed to start session: ${error.message}`
+          }
+        ]
+      };
+    }
+  }
+);
+
+server.registerTool(
+  'ssh_session_send',
+  {
+    description: 'Send a command to an existing SSH session',
+    inputSchema: {
+      session: z.string().describe('Session ID from ssh_session_start'),
+      command: z.string().describe('Command to execute in the session'),
+      timeout: z.number().optional().describe('Command timeout in milliseconds (default: 30000)')
+    }
+  },
+  async ({ session: sessionId, command, timeout = 30000 }) => {
+    try {
+      const session = getSession(sessionId);
+      
+      const startTime = Date.now();
+      const result = await session.execute(command, { timeout });
+      const duration = Date.now() - startTime;
+      
+      logger.info('Session command executed', {
+        session: sessionId,
+        command: command.substring(0, 50),
+        success: result.success,
+        duration: `${duration}ms`
+      });
+      
+      let output = `📟 Session: ${sessionId}\n`;
+      output += `Server: ${session.serverName}\n`;
+      output += `Working Directory: ${session.context.cwd}\n`;
+      output += `Command: ${command}\n`;
+      output += `Duration: ${duration}ms\n`;
+      output += '━'.repeat(60) + '\n\n';
+      
+      if (result.success) {
+        output += '✅ Output:\n' + result.output;
+      } else {
+        output += '❌ Error:\n' + (result.error || result.output);
+      }
+      
+      // Add session state info
+      output += '\n\n' + '━'.repeat(60) + '\n';
+      output += `Session State: ${session.state}\n`;
+      output += `Commands Executed: ${session.context.history.length}\n`;
+      
+      return {
+        content: [
+          {
+            type: 'text',
+            text: output
+          }
+        ]
+      };
+    } catch (error) {
+      logger.error('Failed to send command to session', {
+        session: sessionId,
+        command,
+        error: error.message
+      });
+      
+      return {
+        content: [
+          {
+            type: 'text',
+            text: `❌ Session error: ${error.message}`
+          }
+        ]
+      };
+    }
+  }
+);
+
+server.registerTool(
+  'ssh_session_list',
+  {
+    description: 'List all active SSH sessions',
+    inputSchema: {
+      server: z.string().optional().describe('Filter by server name')
+    }
+  },
+  async ({ server }) => {
+    try {
+      let sessions = listSessions();
+      
+      // Filter by server if specified
+      if (server) {
+        sessions = sessions.filter(s => 
+          s.server.toLowerCase().includes(server.toLowerCase())
+        );
+      }
+      
+      let output = `📋 Active SSH Sessions\n`;
+      output += '━'.repeat(60) + '\n\n';
+      
+      if (sessions.length === 0) {
+        output += 'No active sessions';
+        if (server) {
+          output += ` for server "${server}"`;
+        }
+        output += '.\n';
+      } else {
+        sessions.forEach((session, index) => {
+          const age = Math.floor((Date.now() - new Date(session.created).getTime()) / 1000);
+          const idle = Math.floor((Date.now() - new Date(session.lastActivity).getTime()) / 1000);
+          
+          output += `${index + 1}. Session: ${session.id}\n`;
+          output += `   Server: ${session.server}\n`;
+          output += `   State: ${session.state}\n`;
+          output += `   Working Dir: ${session.cwd || 'unknown'}\n`;
+          output += `   Commands Run: ${session.historyCount}\n`;
+          output += `   Age: ${formatDuration(age)}\n`;
+          output += `   Idle: ${formatDuration(idle)}\n`;
+          
+          if (session.variables.length > 0) {
+            output += `   Variables: ${session.variables.join(', ')}\n`;
+          }
+          
+          output += '\n';
+        });
+      }
+      
+      output += '━'.repeat(60) + '\n';
+      output += `Total Active Sessions: ${sessions.length}\n`;
+      
+      logger.info('Listed SSH sessions', {
+        total: sessions.length,
+        filter: server
+      });
+      
+      return {
+        content: [
+          {
+            type: 'text',
+            text: output
+          }
+        ]
+      };
+    } catch (error) {
+      return {
+        content: [
+          {
+            type: 'text',
+            text: `❌ Error listing sessions: ${error.message}`
+          }
+        ]
+      };
+    }
+  }
+);
+
+server.registerTool(
+  'ssh_session_close',
+  {
+    description: 'Close an SSH session',
+    inputSchema: {
+      session: z.string().describe('Session ID to close (or "all" to close all sessions)')
+    }
+  },
+  async ({ session: sessionId }) => {
+    try {
+      if (sessionId === 'all') {
+        const sessions = listSessions();
+        const count = sessions.length;
+        
+        sessions.forEach(s => {
+          try {
+            closeSession(s.id);
+          } catch (err) {
+            // Ignore individual close errors
+          }
+        });
+        
+        logger.info('Closed all SSH sessions', { count });
+        
+        return {
+          content: [
+            {
+              type: 'text',
+              text: `🔚 Closed ${count} SSH sessions`
+            }
+          ]
+        };
+      } else {
+        closeSession(sessionId);
+        
+        logger.info('SSH session closed', { session: sessionId });
+        
+        return {
+          content: [
+            {
+              type: 'text',
+              text: `🔚 Session closed: ${sessionId}`
+            }
+          ]
+        };
+      }
+    } catch (error) {
+      logger.error('Failed to close session', {
+        session: sessionId,
+        error: error.message
+      });
+      
+      return {
+        content: [
+          {
+            type: 'text',
+            text: `❌ Failed to close session: ${error.message}`
+          }
+        ]
+      };
+    }
+  }
+);
+
+// Helper function to format duration
+function formatDuration(seconds) {
+  if (seconds < 60) {
+    return `${seconds}s`;
+  } else if (seconds < 3600) {
+    return `${Math.floor(seconds / 60)}m ${seconds % 60}s`;
+  } else {
+    return `${Math.floor(seconds / 3600)}h ${Math.floor((seconds % 3600) / 60)}m`;
+  }
+}
 
 server.registerTool(
   'ssh_list_servers',

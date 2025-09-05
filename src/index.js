@@ -57,6 +57,14 @@ import {
   executeOnGroup,
   EXECUTION_STRATEGIES
 } from './server-groups.js';
+import {
+  createTunnel,
+  getTunnel,
+  listTunnels,
+  closeTunnel,
+  closeServerTunnels,
+  TUNNEL_TYPES
+} from './tunnel-manager.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -2156,6 +2164,233 @@ server.registerTool(
             text: `❌ Connection management failed: ${error.message}`,
           },
         ],
+      };
+    }
+  }
+);
+
+// SSH Tunnel Management - Create tunnel
+server.registerTool(
+  'ssh_tunnel_create',
+  {
+    description: 'Create SSH tunnel (port forwarding or SOCKS proxy)',
+    inputSchema: {
+      server: z.string().describe('Server name or alias'),
+      type: z.enum(['local', 'remote', 'dynamic']).describe('Tunnel type'),
+      localHost: z.string().optional().describe('Local host (default: 127.0.0.1)'),
+      localPort: z.number().describe('Local port'),
+      remoteHost: z.string().optional().describe('Remote host (not needed for dynamic)'),
+      remotePort: z.number().optional().describe('Remote port (not needed for dynamic)')
+    }
+  },
+  async ({ server, type, localHost, localPort, remoteHost, remotePort }) => {
+    try {
+      const servers = loadServerConfig();
+      const resolvedName = resolveServerName(server, servers);
+      
+      if (!resolvedName) {
+        throw new Error(`Server "${server}" not found`);
+      }
+      
+      const ssh = await getSSHConnection(resolvedName);
+      
+      const config = {
+        type,
+        localHost: localHost || '127.0.0.1',
+        localPort,
+        remoteHost,
+        remotePort
+      };
+      
+      const tunnel = await createTunnel(resolvedName, ssh, config);
+      
+      let output = `✅ SSH tunnel created\n`;
+      output += `ID: ${tunnel.id}\n`;
+      output += `Type: ${type}\n`;
+      output += `Local: ${config.localHost}:${localPort}\n`;
+      
+      if (type === 'local') {
+        output += `Remote: ${remoteHost}:${remotePort}\n`;
+        output += `\n📌 Access remote ${remoteHost}:${remotePort} via local ${config.localHost}:${localPort}`;
+      } else if (type === 'remote') {
+        output += `Remote: ${remoteHost}:${remotePort}\n`;
+        output += `\n📌 Remote ${remoteHost}:${remotePort} will forward to local ${config.localHost}:${localPort}`;
+      } else if (type === 'dynamic') {
+        output += `SOCKS proxy: ${config.localHost}:${localPort}\n`;
+        output += `\n📌 SOCKS5 proxy available at ${config.localHost}:${localPort}`;
+        output += `\n💡 Configure browser/app: SOCKS5 proxy ${config.localHost}:${localPort}`;
+      }
+      
+      logger.info('SSH tunnel created', {
+        id: tunnel.id,
+        server: resolvedName,
+        type,
+        local: `${config.localHost}:${localPort}`
+      });
+      
+      return {
+        content: [
+          {
+            type: 'text',
+            text: output
+          }
+        ]
+      };
+    } catch (error) {
+      logger.error('Failed to create tunnel', { error: error.message });
+      return {
+        content: [
+          {
+            type: 'text',
+            text: `❌ Tunnel creation failed: ${error.message}`
+          }
+        ]
+      };
+    }
+  }
+);
+
+// List active tunnels
+server.registerTool(
+  'ssh_tunnel_list',
+  {
+    description: 'List active SSH tunnels',
+    inputSchema: {
+      server: z.string().optional().describe('Filter by server name')
+    }
+  },
+  async ({ server }) => {
+    try {
+      const servers = loadServerConfig();
+      let resolvedName = null;
+      
+      if (server) {
+        resolvedName = resolveServerName(server, servers);
+        if (!resolvedName) {
+          throw new Error(`Server "${server}" not found`);
+        }
+      }
+      
+      const tunnels = listTunnels(resolvedName);
+      
+      if (tunnels.length === 0) {
+        return {
+          content: [
+            {
+              type: 'text',
+              text: '📋 No active tunnels'
+            }
+          ]
+        };
+      }
+      
+      let output = `📋 Active SSH Tunnels\n`;
+      output += '━'.repeat(60) + '\n\n';
+      
+      tunnels.forEach(tunnel => {
+        output += `🔧 ${tunnel.id}\n`;
+        output += `   Server: ${tunnel.server}\n`;
+        output += `   Type: ${tunnel.type}\n`;
+        output += `   State: ${tunnel.state}\n`;
+        output += `   Local: ${tunnel.config.localHost}:${tunnel.config.localPort}\n`;
+        
+        if (tunnel.type !== 'dynamic') {
+          output += `   Remote: ${tunnel.config.remoteHost}:${tunnel.config.remotePort}\n`;
+        }
+        
+        output += `   Active connections: ${tunnel.activeConnections}\n`;
+        output += `   Total connections: ${tunnel.stats.connectionsTotal}\n`;
+        output += `   Bytes transferred: ${(tunnel.stats.bytesTransferred / 1024).toFixed(2)} KB\n`;
+        output += `   Errors: ${tunnel.stats.errors}\n`;
+        output += `   Created: ${new Date(tunnel.created).toLocaleString()}\n`;
+        output += `   Last activity: ${new Date(tunnel.lastActivity).toLocaleString()}\n`;
+        output += '\n';
+      });
+      
+      output += '━'.repeat(60) + '\n';
+      output += `Total tunnels: ${tunnels.length}`;
+      
+      return {
+        content: [
+          {
+            type: 'text',
+            text: output
+          }
+        ]
+      };
+    } catch (error) {
+      logger.error('Failed to list tunnels', { error: error.message });
+      return {
+        content: [
+          {
+            type: 'text',
+            text: `❌ Failed to list tunnels: ${error.message}`
+          }
+        ]
+      };
+    }
+  }
+);
+
+// Close a tunnel
+server.registerTool(
+  'ssh_tunnel_close',
+  {
+    description: 'Close an SSH tunnel',
+    inputSchema: {
+      tunnelId: z.string().optional().describe('Tunnel ID to close'),
+      server: z.string().optional().describe('Close all tunnels for this server')
+    }
+  },
+  async ({ tunnelId, server }) => {
+    try {
+      if (!tunnelId && !server) {
+        throw new Error('Either tunnelId or server must be specified');
+      }
+      
+      let output = '';
+      
+      if (tunnelId) {
+        // Close specific tunnel
+        closeTunnel(tunnelId);
+        output = `✅ Tunnel ${tunnelId} closed`;
+        
+        logger.info('SSH tunnel closed', { id: tunnelId });
+      } else if (server) {
+        // Close all tunnels for server
+        const servers = loadServerConfig();
+        const resolvedName = resolveServerName(server, servers);
+        
+        if (!resolvedName) {
+          throw new Error(`Server "${server}" not found`);
+        }
+        
+        const count = closeServerTunnels(resolvedName);
+        output = `✅ Closed ${count} tunnel(s) for server ${resolvedName}`;
+        
+        logger.info('Server tunnels closed', {
+          server: resolvedName,
+          count
+        });
+      }
+      
+      return {
+        content: [
+          {
+            type: 'text',
+            text: output
+          }
+        ]
+      };
+    } catch (error) {
+      logger.error('Failed to close tunnel', { error: error.message });
+      return {
+        content: [
+          {
+            type: 'text',
+            text: `❌ Failed to close tunnel: ${error.message}`
+          }
+        ]
       };
     }
   }

@@ -59,3 +59,8 @@ id_ed25519*
 *.backup
 *.bak
 .server-aliases.json
+
+# SSH Manager logs and history
+.ssh-manager.log
+.ssh-command-history.json
+.server-groups.json

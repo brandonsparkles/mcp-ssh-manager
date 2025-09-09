@@ -13,7 +13,6 @@ jobs:
     strategy:
       matrix:
         node-version: [18.x, 20.x]
-        python-version: ['3.10', '3.11']
     
     steps:
     - uses: actions/checkout@v3
@@ -23,26 +22,14 @@ jobs:
       with:
         node-version: ${{ matrix.node-version }}
     
-    - name: Set up Python ${{ matrix.python-version }}
-      uses: actions/setup-python@v4
-      with:
-        python-version: ${{ matrix.python-version }}
-    
     - name: Install Node dependencies
       run: npm install
-    
-    - name: Install Python dependencies
-      run: |
-        python -m pip install --upgrade pip
-        pip install -r tools/requirements.txt
     
     - name: Check Node syntax
       run: node --check src/index.js
     
-    - name: Check Python syntax
-      run: |
-        python -m py_compile tools/server_manager.py
-        python -m py_compile tools/test-connection.py
+    - name: Check SSH Manager syntax
+      run: node --check src/ssh-manager.js
     
     - name: Create test .env file
       run: |
@@ -50,9 +37,6 @@ jobs:
         echo "SSH_SERVER_TEST_USER=test" >> .env
         echo "SSH_SERVER_TEST_PASSWORD=test" >> .env
         echo "SSH_SERVER_TEST_PORT=22" >> .env
-    
-    - name: Test server manager
-      run: python tools/server_manager.py list
     
     - name: Run JavaScript tests
       run: npm test
@@ -85,22 +69,9 @@ jobs:
       uses: actions/setup-node@v3
       with:
         node-version: '18.x'
-        
-    - name: Set up Python
-      uses: actions/setup-python@v4
-      with:
-        python-version: '3.10'
     
     - name: Install dependencies
-      run: |
-        npm install
-        pip install black flake8
-    
-    - name: Check Python formatting
-      run: black --check tools/
-      
-    - name: Run flake8
-      run: flake8 tools/ --max-line-length=100
+      run: npm install
       
     - name: Check for secrets
       run: |

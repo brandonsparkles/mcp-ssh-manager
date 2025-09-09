@@ -18,19 +18,13 @@ else
     ERRORS=$((ERRORS + 1))
 fi
 
-# Check Python syntax
-echo "📋 Checking Python syntax..."
-PYTHON_FILES=$(find tools -name "*.py" 2>/dev/null)
-PYTHON_OK=true
-for file in $PYTHON_FILES; do
-    if ! python3 -m py_compile "$file" 2>/dev/null; then
-        echo "  ❌ Python syntax error in $file"
-        PYTHON_OK=false
-        ERRORS=$((ERRORS + 1))
-    fi
-done
-if [ "$PYTHON_OK" = true ]; then
-    echo "  ✅ Python syntax is valid"
+# Check SSH Manager syntax
+echo "📋 Checking SSH Manager syntax..."
+if node --check src/ssh-manager.js 2>/dev/null; then
+    echo "  ✅ SSH Manager syntax is valid"
+else
+    echo "  ❌ SSH Manager syntax error!"
+    ERRORS=$((ERRORS + 1))
 fi
 
 # Check for .env in git

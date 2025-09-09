@@ -137,8 +137,11 @@ function loadServerConfig() {
 
 // Execute command with timeout - using child_process timeout for real kill
 async function execCommandWithTimeout(ssh, command, options = {}, timeoutMs = 30000) {
+  // Pass through rawCommand if specified
+  const { rawCommand, ...otherOptions } = options;
+  
   // For commands that might hang, use the system's timeout command if available
-  const useSystemTimeout = timeoutMs > 0 && timeoutMs < 300000; // Max 5 minutes
+  const useSystemTimeout = timeoutMs > 0 && timeoutMs < 300000 && !rawCommand; // Max 5 minutes, not for raw commands
   
   if (useSystemTimeout) {
     // Wrap command with timeout command (works on Linux/Mac)
@@ -146,7 +149,7 @@ async function execCommandWithTimeout(ssh, command, options = {}, timeoutMs = 30
     const wrappedCommand = `timeout ${timeoutSeconds} sh -c '${command.replace(/'/g, "'\\''")}'`;
     
     try {
-      const result = await ssh.execCommand(wrappedCommand, options);
+      const result = await ssh.execCommand(wrappedCommand, otherOptions);
       
       // Check if timeout occurred (exit code 124 on Linux, 124 or 143 on Mac)
       if (result.code === 124 || result.code === 143) {

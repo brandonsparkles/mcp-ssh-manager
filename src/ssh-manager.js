@@ -52,8 +52,8 @@ class SSHManager {
       throw new Error('Not connected to SSH server');
     }
 
-    const { timeout = 30000, cwd } = options;
-    const fullCommand = cwd ? `cd ${cwd} && ${command}` : command;
+    const { timeout = 30000, cwd, rawCommand = false } = options;
+    const fullCommand = (cwd && !rawCommand) ? `cd ${cwd} && ${command}` : command;
 
     return new Promise((resolve, reject) => {
       let stdout = '';
@@ -195,9 +195,25 @@ class SSHManager {
   }
 
   async putFile(localPath, remotePath) {
+    // SFTP doesn't resolve ~ automatically, we need to get the real path
+    let resolvedRemotePath = remotePath;
+    if (remotePath.includes('~')) {
+      // Use pwd in home directory to get the real path
+      const result = await this.execCommand('cd ~ && pwd', { timeout: 5000, rawCommand: true });
+      const homeDir = result.stdout.trim();
+      // Replace ~ with the actual home directory
+      resolvedRemotePath = remotePath.replace(/^~/, homeDir);
+    }
+    
     const sftp = await this.getSFTP();
     return new Promise((resolve, reject) => {
-      sftp.fastPut(localPath, remotePath, (err) => {
+      // Check if local file exists and is readable
+      if (!fs.existsSync(localPath)) {
+        reject(new Error(`Local file does not exist: ${localPath}`));
+        return;
+      }
+      
+      sftp.fastPut(localPath, resolvedRemotePath, (err) => {
         if (err) reject(err);
         else resolve();
       });
@@ -205,9 +221,19 @@ class SSHManager {
   }
 
   async getFile(localPath, remotePath) {
+    // SFTP doesn't resolve ~ automatically, we need to get the real path
+    let resolvedRemotePath = remotePath;
+    if (remotePath.includes('~')) {
+      // Use pwd in home directory to get the real path
+      const result = await this.execCommand('cd ~ && pwd', { timeout: 5000, rawCommand: true });
+      const homeDir = result.stdout.trim();
+      // Replace ~ with the actual home directory
+      resolvedRemotePath = remotePath.replace(/^~/, homeDir);
+    }
+    
     const sftp = await this.getSFTP();
     return new Promise((resolve, reject) => {
-      sftp.fastGet(remotePath, localPath, (err) => {
+      sftp.fastGet(resolvedRemotePath, localPath, (err) => {
         if (err) reject(err);
         else resolve();
       });

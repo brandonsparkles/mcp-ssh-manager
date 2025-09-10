@@ -3,8 +3,14 @@
 
 set -e
 
-# Script directory
-SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+# Script directory - resolve symlinks if necessary
+if [ -L "$0" ]; then
+    # Script is a symlink, resolve it
+    SCRIPT_PATH="$(readlink -f "$0" 2>/dev/null || readlink "$0")"
+else
+    SCRIPT_PATH="$0"
+fi
+SCRIPT_DIR="$(cd "$(dirname "$SCRIPT_PATH")" && pwd)"
 
 # Source libraries
 source "$SCRIPT_DIR/lib/colors.sh"
@@ -15,7 +21,7 @@ source "$SCRIPT_DIR/lib/menu.sh"
 source "$SCRIPT_DIR/commands/server.sh"
 
 # Version
-VERSION="2.0.1"
+VERSION="2.0.2"
 
 # Show version
 show_version() {

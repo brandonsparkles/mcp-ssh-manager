@@ -4,7 +4,25 @@
 # Configuration paths
 export SSH_MANAGER_HOME="${SSH_MANAGER_HOME:-$HOME/.ssh-manager}"
 export SSH_MANAGER_CONFIG="$SSH_MANAGER_HOME/config.json"
-export SSH_MANAGER_ENV="${SSH_MANAGER_ENV:-$(dirname "$(dirname "$(dirname "$0")")")/.env}"
+
+# Resolve .env path - handle both direct and symlinked execution
+if [ -z "$SSH_MANAGER_ENV" ]; then
+    if [ -n "$SCRIPT_DIR" ]; then
+        # Called from main ssh-manager script
+        SSH_MANAGER_ENV="$(dirname "$SCRIPT_DIR")/.env"
+    else
+        # Called directly - need to resolve path ourselves
+        if [ -L "$0" ]; then
+            REAL_PATH="$(readlink -f "$0" 2>/dev/null || readlink "$0")"
+        else
+            REAL_PATH="$0"
+        fi
+        REAL_DIR="$(cd "$(dirname "$REAL_PATH")" && pwd)"
+        SSH_MANAGER_ENV="$(dirname "$(dirname "$REAL_DIR")")/.env"
+    fi
+    export SSH_MANAGER_ENV
+fi
+
 export SSH_MANAGER_ALIASES="$SSH_MANAGER_HOME/aliases.json"
 
 # Ensure config directory exists

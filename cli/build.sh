@@ -18,7 +18,7 @@ TARGET_DIR="$HOME/.ssh-manager-cli"
 TEMP_BUILD="/tmp/ssh-manager-build-$$"
 
 # Version
-VERSION="2.0.1"
+VERSION="2.0.2"
 
 echo -e "${BLUE}╔════════════════════════════════════════════╗${NC}"
 echo -e "${BLUE}║     SSH Manager CLI Build Script v$VERSION    ║${NC}"

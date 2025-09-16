@@ -39,6 +39,29 @@ const DEFAULT_HOOKS = {
         command: 'echo "[$(date)] Error on {server}: {error}" >> errors.log'
       }
     ]
+  },
+  // SSH key change hooks
+  'pre-connect-key-change': {
+    enabled: false,
+    description: 'Run before accepting a changed SSH host key',
+    actions: [
+      {
+        type: 'notification',
+        name: 'log-key-change',
+        command: 'echo "[$(date)] SSH key change detected for {server} ({host}:{port})" >> ssh-key-changes.log'
+      }
+    ]
+  },
+  'post-key-update': {
+    enabled: false,
+    description: 'Run after updating an SSH host key',
+    actions: [
+      {
+        type: 'notification',
+        name: 'log-key-updated',
+        command: 'echo "[$(date)] SSH key {action} for {server} ({host}:{port})" >> ssh-key-changes.log'
+      }
+    ]
   }
 };
 

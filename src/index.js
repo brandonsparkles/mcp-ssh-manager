@@ -65,6 +65,18 @@ import {
   closeServerTunnels,
   TUNNEL_TYPES
 } from './tunnel-manager.js';
+import {
+  getHostKeyFingerprint,
+  isHostKnown,
+  getCurrentHostKey,
+  removeHostKey,
+  addHostKey,
+  updateHostKey,
+  hasHostKeyChanged,
+  listKnownHosts,
+  detectSSHKeyError,
+  handleSSHKeyError
+} from './ssh-key-manager.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -308,7 +320,7 @@ async function getConnection(serverName) {
 
     logger.logConnection(serverName, 'established', {
       host: serverConfig.host,
-      port: connectionConfig.port,
+      port: serverConfig.port,
       method: serverConfig.password ? 'password' : 'key'
     });
 
@@ -619,18 +631,18 @@ server.registerTool(
       
       // Add SSH options for non-interactive mode
       const sshOptions = [];
-      
+
       // Different options based on authentication method
       if (serverConfig.keypath) {
         sshOptions.push('-o BatchMode=yes');           // No password prompts
-        sshOptions.push('-o StrictHostKeyChecking=no'); // No host key verification prompts
+        sshOptions.push('-o StrictHostKeyChecking=accept-new'); // Accept new keys, reject changed ones
         sshOptions.push('-o ConnectTimeout=10');        // Connection timeout
-        
+
         const keyPath = serverConfig.keypath.replace('~', process.env.HOME);
         sshOptions.push(`-i ${keyPath}`);
       } else {
         // With sshpass, we don't use BatchMode
-        sshOptions.push('-o StrictHostKeyChecking=no');
+        sshOptions.push('-o StrictHostKeyChecking=accept-new'); // Accept new keys, reject changed ones
         sshOptions.push('-o ConnectTimeout=10');
       }
       
@@ -748,8 +760,26 @@ server.registerTool(
               error: errorOutput,
               duration: `${duration}ms`
             });
-            
-            reject(new Error(`Rsync failed with exit code ${code}: ${errorOutput || 'Unknown error'}`));
+
+            // Check if it's an SSH key error
+            if (detectSSHKeyError(errorOutput)) {
+              const hostInfo = extractHostFromSSHError(errorOutput);
+              let errorMsg = `SSH host key verification failed for ${serverName}.\n`;
+
+              if (hostInfo) {
+                errorMsg += `Host: ${hostInfo.host}:${hostInfo.port}\n`;
+              }
+
+              errorMsg += `\n📍 To fix this issue:\n`;
+              errorMsg += `1. Verify the server identity\n`;
+              errorMsg += `2. Use 'ssh_key_manage' tool with action 'verify' to check the key\n`;
+              errorMsg += `3. Use 'ssh_key_manage' tool with action 'accept' to update the key if you trust the server\n`;
+              errorMsg += `\nOriginal error:\n${errorOutput}`;
+
+              reject(new Error(errorMsg));
+            } else {
+              reject(new Error(`Rsync failed with exit code ${code}: ${errorOutput || 'Unknown error'}`));
+            }
             return;
           }
           
@@ -2531,6 +2561,251 @@ server.registerTool(
           {
             type: 'text',
             text: `❌ Failed to close tunnel: ${error.message}`
+          }
+        ]
+      };
+    }
+  }
+);
+
+// Manage SSH host keys
+server.registerTool(
+  'ssh_key_manage',
+  {
+    description: 'Manage SSH host keys for security verification',
+    inputSchema: {
+      action: z.enum(['verify', 'accept', 'remove', 'list', 'check']).describe('Action to perform'),
+      server: z.string().optional().describe('Server name (required for most actions)'),
+      autoAccept: z.boolean().optional().describe('Automatically accept new keys (use with caution)')
+    }
+  },
+  async ({ action, server, autoAccept = false }) => {
+    try {
+      const servers = loadServerConfig();
+      let resolvedName, serverConfig, host, port;
+
+      // Resolve server details for actions that need them
+      if (server && action !== 'list') {
+        resolvedName = resolveServerName(server, servers);
+        if (!resolvedName) {
+          throw new Error(`Server "${server}" not found`);
+        }
+        serverConfig = servers[resolvedName];
+        host = serverConfig.host;
+        port = parseInt(serverConfig.port || '22');
+      }
+
+      switch (action) {
+        case 'verify': {
+          // Check if host key has changed
+          const verification = await hasHostKeyChanged(host, port);
+
+          if (verification.changed) {
+            // Execute pre-connect-key-change hook
+            await executeHook('pre-connect-key-change', {
+              server: resolvedName,
+              host,
+              port,
+              currentFingerprints: verification.currentFingerprints,
+              newFingerprints: verification.newFingerprints
+            });
+
+            let output = `⚠️  SSH host key has changed for ${server} (${host}:${port})\n\n`;
+            output += `Current fingerprints:\n`;
+            verification.currentFingerprints.forEach(fp => {
+              output += `  ${fp}\n`;
+            });
+            output += `\nNew fingerprints:\n`;
+            verification.newFingerprints.forEach(fp => {
+              output += `  ${fp}\n`;
+            });
+            output += `\n⚠️  This could indicate a security issue or server reinstallation.\n`;
+            output += `Use 'ssh_key_manage' with action 'accept' to update the key if you trust this change.`;
+
+            return {
+              content: [
+                {
+                  type: 'text',
+                  text: output
+                }
+              ]
+            };
+          } else {
+            let output = `✅ SSH host key verified for ${server} (${host}:${port})\n`;
+            output += `Reason: ${verification.reason}\n`;
+
+            if (verification.reason === 'not_in_known_hosts') {
+              output += `\nℹ️  Host not in known_hosts. Use 'accept' action to add it.`;
+            }
+
+            return {
+              content: [
+                {
+                  type: 'text',
+                  text: output
+                }
+              ]
+            };
+          }
+        }
+
+        case 'accept': {
+          // Check if key exists
+          const isKnown = isHostKnown(host, port);
+
+          if (isKnown) {
+            // Update existing key
+            await updateHostKey(host, port);
+
+            // Execute post-key-update hook
+            await executeHook('post-key-update', {
+              server: resolvedName,
+              host,
+              port,
+              action: 'updated'
+            });
+
+            logger.info('SSH host key updated', { server: resolvedName, host, port });
+
+            return {
+              content: [
+                {
+                  type: 'text',
+                  text: `✅ SSH host key updated for ${server} (${host}:${port})\nThe new key has been accepted and saved.`
+                }
+              ]
+            };
+          } else {
+            // Add new key
+            await addHostKey(host, port);
+
+            // Execute post-key-update hook
+            await executeHook('post-key-update', {
+              server: resolvedName,
+              host,
+              port,
+              action: 'added'
+            });
+
+            logger.info('SSH host key added', { server: resolvedName, host, port });
+
+            return {
+              content: [
+                {
+                  type: 'text',
+                  text: `✅ SSH host key added for ${server} (${host}:${port})\nThe key has been saved to known_hosts.`
+                }
+              ]
+            };
+          }
+        }
+
+        case 'remove': {
+          removeHostKey(host, port);
+
+          logger.info('SSH host key removed', { server: resolvedName, host, port });
+
+          return {
+            content: [
+              {
+                type: 'text',
+                text: `✅ SSH host key removed for ${server} (${host}:${port})`
+              }
+            ]
+          };
+        }
+
+        case 'check': {
+          // Get current fingerprints
+          const currentKeys = getCurrentHostKey(host, port);
+          const newKeys = await getHostKeyFingerprint(host, port);
+
+          let output = `🔑 SSH Host Keys for ${server} (${host}:${port})\n`;
+          output += '━'.repeat(60) + '\n\n';
+
+          if (currentKeys && currentKeys.length > 0) {
+            output += `📋 Keys in known_hosts:\n`;
+            currentKeys.forEach(key => {
+              output += `  ${key.type}: ${key.fingerprint}\n`;
+            });
+          } else {
+            output += `⚠️  No keys found in known_hosts\n`;
+          }
+
+          output += `\n🌐 Keys from server:\n`;
+          if (newKeys && newKeys.length > 0) {
+            newKeys.forEach(key => {
+              output += `  ${key.type}: ${key.fingerprint}\n`;
+            });
+          } else {
+            output += `  ❌ Could not fetch keys from server\n`;
+          }
+
+          return {
+            content: [
+              {
+                type: 'text',
+                text: output
+              }
+            ]
+          };
+        }
+
+        case 'list': {
+          const knownHosts = listKnownHosts();
+
+          let output = `🔑 Known SSH Hosts\n`;
+          output += '━'.repeat(60) + '\n\n';
+
+          if (knownHosts.length === 0) {
+            output += 'No hosts in known_hosts file\n';
+          } else {
+            // Map server names to known hosts
+            const serverMap = new Map();
+            for (const [name, config] of Object.entries(servers)) {
+              const key = `${config.host}:${config.port || 22}`;
+              serverMap.set(key, name);
+            }
+
+            knownHosts.forEach(entry => {
+              const serverName = serverMap.get(`${entry.host}:${entry.port}`);
+              output += `📍 ${entry.host}:${entry.port}`;
+              if (serverName) {
+                output += ` (${serverName})`;
+              }
+              output += '\n';
+
+              entry.keys.forEach(key => {
+                output += `   ${key.type}: ${key.fingerprint}\n`;
+              });
+              output += '\n';
+            });
+          }
+
+          output += '━'.repeat(60) + '\n';
+          output += `Total: ${knownHosts.length} hosts`;
+
+          return {
+            content: [
+              {
+                type: 'text',
+                text: output
+              }
+            ]
+          };
+        }
+
+        default:
+          throw new Error(`Unknown action: ${action}`);
+      }
+    } catch (error) {
+      logger.error('SSH key management failed', { action, server, error: error.message });
+
+      return {
+        content: [
+          {
+            type: 'text',
+            text: `❌ SSH key management error: ${error.message}`
           }
         ]
       };

@@ -9,6 +9,8 @@ class SSHManager {
     this.connected = false;
     this.sftp = null;
     this.cachedHomeDir = null;
+    this.autoAcceptHostKey = config.autoAcceptHostKey || false;
+    this.hostKeyVerification = config.hostKeyVerification !== false; // Default true
   }
 
   async connect() {
@@ -35,6 +37,20 @@ class SSHManager {
         readyTimeout: 20000,
         keepaliveInterval: 10000
       };
+
+      // Add host key verification callback if enabled
+      if (this.hostKeyVerification) {
+        connConfig.hostVerifier = (hash) => {
+          // This callback is called with the host key hash
+          // We can verify it against known_hosts here
+          // For now, return true if autoAcceptHostKey is enabled
+          if (this.autoAcceptHostKey) {
+            return true;
+          }
+          // Otherwise, let SSH2 handle it normally
+          return undefined;
+        };
+      }
 
       // Add authentication
       if (this.config.keypath) {

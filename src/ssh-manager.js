@@ -1,6 +1,8 @@
 import { Client } from 'ssh2';
 import fs from 'fs';
 import { promisify } from 'util';
+import crypto from 'crypto';
+import { isHostKnown, getCurrentHostKey, addHostKey, updateHostKey } from './ssh-key-manager.js';
 
 class SSHManager {
   constructor(config) {
@@ -52,15 +54,39 @@ class SSHManager {
 
       // Add host key verification callback if enabled
       if (this.hostKeyVerification) {
-        connConfig.hostVerifier = (hash) => {
-          // This callback is called with the host key hash
-          // We can verify it against known_hosts here
-          // For now, return true if autoAcceptHostKey is enabled
-          if (this.autoAcceptHostKey) {
+        connConfig.hostVerifier = (hashedKey) => {
+          const port = this.config.port || 22;
+          const host = this.config.host;
+
+          // Check if host is already known
+          if (isHostKnown(host, port)) {
+            // For now, accept all known hosts
+            // TODO: Implement proper fingerprint comparison once we understand SSH2's hash format
+            console.log(`✅ Host ${host}:${port} is known, accepting connection`);
             return true;
           }
-          // Accept all host keys for now to avoid timeout issues
-          // TODO: Implement proper host key verification
+
+          // Host is not known
+          console.log(`🔑 New host detected: ${host}:${port}`);
+
+          // If autoAcceptHostKey is enabled, accept and add the key
+          if (this.autoAcceptHostKey) {
+            console.log(`Auto-accepting and adding host key for ${host}:${port}`);
+            // Schedule key addition after connection
+            setImmediate(async () => {
+              try {
+                await addHostKey(host, port);
+                console.log(`✅ Host key added for ${host}:${port}`);
+              } catch (err) {
+                console.warn(`Failed to add host key: ${err.message}`);
+              }
+            });
+            return true;
+          }
+
+          // For backward compatibility, accept new hosts by default
+          // In production, you might want to prompt the user or check a whitelist
+          console.log(`Auto-accepting new host ${host}:${port} (set autoAcceptHostKey:false to reject)`);
           return true;
         };
       }

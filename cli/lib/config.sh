@@ -106,14 +106,29 @@ get_server_config() {
     local server="$1"
     local field="$2"
     local server_upper="$(echo "$server" | tr '[:lower:]' '[:upper:]')"
-    
+
     if [ ! -f "$SSH_MANAGER_ENV" ]; then
         return 1
     fi
-    
+
     local field_upper="$(echo "$field" | tr '[:lower:]' '[:upper:]')"
     local key="SSH_SERVER_${server_upper}_${field_upper}"
-    grep "^${key}=" "$SSH_MANAGER_ENV" 2>/dev/null | cut -d'=' -f2- | tr -d '"'
+
+    # Read value using IFS to preserve all special characters including quotes
+    local value=""
+    while IFS="=" read -r k v; do
+        if [[ "$k" == "$key" ]]; then
+            value="$v"
+            break
+        fi
+    done < <(grep "^${key}=" "$SSH_MANAGER_ENV" 2>/dev/null)
+
+    # Only remove surrounding quotes if they exist, preserve quotes within the value
+    if [[ "$value" =~ ^\"(.*)\"$ ]]; then
+        printf '%s' "${BASH_REMATCH[1]}"
+    else
+        printf '%s' "$value"
+    fi
 }
 
 # Add server to .env
@@ -188,39 +203,53 @@ test_ssh_connection() {
     local port=$(get_server_config "$server" "PORT")
     local keypath=$(get_server_config "$server" "KEYPATH")
     local password=$(get_server_config "$server" "PASSWORD")
-    
+
     port=${port:-22}
-    
+
     if [ -z "$host" ] || [ -z "$user" ]; then
         print_error "Server '$server' not found or incomplete configuration"
         return 1
     fi
-    
+
     print_info "Testing connection to $server ($user@$host:$port)..."
-    
-    local ssh_opts="-o ConnectTimeout=5 -o StrictHostKeyChecking=no"
-    
+
+    local ssh_opts="-o ConnectTimeout=10 -o StrictHostKeyChecking=no"
+    local ssh_output=$(mktemp)
+    local ssh_status
+
     if [ -n "$keypath" ]; then
         ssh_opts="$ssh_opts -i $keypath"
     fi
-    
+
     if [ -n "$password" ]; then
         # Use sshpass if available
         if command -v sshpass >/dev/null 2>&1; then
-            sshpass -p "$password" ssh $ssh_opts -p "$port" "$user@$host" "echo 'Connection successful'" 2>/dev/null
+            sshpass -p "$password" ssh $ssh_opts -p "$port" "$user@$host" "echo 'Connection successful'" > "$ssh_output" 2>&1
+            ssh_status=$?
         else
             print_warning "sshpass not installed, cannot test password authentication"
+            rm -f "$ssh_output"
             return 1
         fi
     else
-        ssh $ssh_opts -p "$port" "$user@$host" "echo 'Connection successful'" 2>/dev/null
+        ssh $ssh_opts -p "$port" "$user@$host" "echo 'Connection successful'" > "$ssh_output" 2>&1
+        ssh_status=$?
     fi
-    
-    if [ $? -eq 0 ]; then
+
+    if [ $ssh_status -eq 0 ]; then
         print_success "Connection successful"
+        rm -f "$ssh_output"
         return 0
     else
         print_error "Connection failed"
+        # Show error details if SSH_MANAGER_DEBUG is set
+        if [ -n "$SSH_MANAGER_DEBUG" ]; then
+            print_warning "Debug output:"
+            cat "$ssh_output" | sed 's/^/  /'
+        else
+            print_info "Set SSH_MANAGER_DEBUG=1 to see detailed error output"
+        fi
+        rm -f "$ssh_output"
         return 1
     fi
 }

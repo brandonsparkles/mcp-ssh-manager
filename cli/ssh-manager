@@ -19,9 +19,10 @@ source "$SCRIPT_DIR/lib/menu.sh"
 
 # Source command modules
 source "$SCRIPT_DIR/commands/server.sh"
+source "$SCRIPT_DIR/commands/tools.sh"
 
 # Version
-VERSION="2.0.2"
+VERSION="3.1.0"
 
 # Show version
 show_version() {
@@ -76,6 +77,14 @@ ${BOLD}COMMANDS:${NC}
         edit        Edit configuration
         show        Show configuration
         init        Initialize configuration
+
+    ${CYAN}tools${NC}       Tool activation/deactivation
+        list        Show all tools and their status
+        configure   Interactive configuration wizard
+        enable      Enable a tool group
+        disable     Disable a tool group
+        reset       Reset to default (all tools enabled)
+        export      Export Claude Code auto-approval config
 
 ${BOLD}OPTIONS:${NC}
     -h, --help      Show this help message
@@ -340,6 +349,9 @@ main() {
             ;;
         tunnel)
             cmd_tunnel "$@"
+            ;;
+        tools)
+            cmd_tools "$@"
             ;;
         config)
             case "$1" in

@@ -152,6 +152,7 @@ import {
   formatBytes,
   getConnectionInfo
 } from './database-manager.js';
+import { loadToolConfig, isToolEnabled } from './tool-config-manager.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -185,6 +186,20 @@ configLoader.load({
 // Initialize hooks system
 initializeHooks().catch(error => {
   logger.error('Failed to initialize hooks', { error: error.message });
+});
+
+// Load tool configuration
+let toolConfig = null;
+loadToolConfig().then(config => {
+  toolConfig = config;
+  const summary = config.getSummary();
+  logger.info(`Tool configuration loaded: ${summary.mode} mode, ${summary.enabledCount}/${summary.totalTools} tools enabled`);
+  if (summary.mode === 'all') {
+    logger.info('💡 Tip: Run "ssh-manager tools configure" to reduce context usage in Claude Code');
+  }
+}).catch(error => {
+  logger.error('Failed to load tool configuration', { error: error.message });
+  logger.info('Using default configuration (all tools enabled)');
 });
 
 // Map to store active connections
@@ -406,8 +421,23 @@ const server = new McpServer({
 
 logger.info('MCP Server initialized', { version: '1.2.0' });
 
+/**
+ * Helper function to conditionally register tools based on configuration
+ * @param {string} toolName - Name of the tool
+ * @param {Object} schema - Tool schema
+ * @param {Function} handler - Tool handler function
+ */
+function registerToolConditional(toolName, schema, handler) {
+  if (isToolEnabled(toolName)) {
+    server.registerTool(toolName, schema, handler);
+    logger.debug(`Registered tool: ${toolName}`);
+  } else {
+    logger.debug(`Skipped disabled tool: ${toolName}`);
+  }
+}
+
 // Register available tools
-server.registerTool(
+registerToolConditional(
   'ssh_execute',
   {
     description: 'Execute command on remote SSH server',
@@ -485,7 +515,7 @@ server.registerTool(
   }
 );
 
-server.registerTool(
+registerToolConditional(
   'ssh_upload',
   {
     description: 'Upload file to remote SSH server',
@@ -536,7 +566,7 @@ server.registerTool(
   }
 );
 
-server.registerTool(
+registerToolConditional(
   'ssh_download',
   {
     description: 'Download file from remote SSH server',
@@ -587,7 +617,7 @@ server.registerTool(
   }
 );
 
-server.registerTool(
+registerToolConditional(
   'ssh_sync',
   {
     description: 'Synchronize files/folders between local and remote via rsync',
@@ -930,7 +960,7 @@ server.registerTool(
   }
 );
 
-server.registerTool(
+registerToolConditional(
   'ssh_tail',
   {
     description: 'Tail remote log files in real-time',
@@ -1029,7 +1059,7 @@ server.registerTool(
   }
 );
 
-server.registerTool(
+registerToolConditional(
   'ssh_monitor',
   {
     description: 'Monitor system resources (CPU, RAM, disk) on remote server',
@@ -1200,7 +1230,7 @@ server.registerTool(
   }
 );
 
-server.registerTool(
+registerToolConditional(
   'ssh_history',
   {
     description: 'View SSH command history',
@@ -1304,7 +1334,7 @@ server.registerTool(
 
 // SSH Session Management Tools
 
-server.registerTool(
+registerToolConditional(
   'ssh_session_start',
   {
     description: 'Start a persistent SSH session that maintains state and context',
@@ -1352,7 +1382,7 @@ server.registerTool(
   }
 );
 
-server.registerTool(
+registerToolConditional(
   'ssh_session_send',
   {
     description: 'Send a command to an existing SSH session',
@@ -1422,7 +1452,7 @@ server.registerTool(
   }
 );
 
-server.registerTool(
+registerToolConditional(
   'ssh_session_list',
   {
     description: 'List all active SSH sessions',
@@ -1500,7 +1530,7 @@ server.registerTool(
   }
 );
 
-server.registerTool(
+registerToolConditional(
   'ssh_session_close',
   {
     description: 'Close an SSH session',
@@ -1577,7 +1607,7 @@ function formatDuration(seconds) {
 
 // Server Group Management Tools
 
-server.registerTool(
+registerToolConditional(
   'ssh_execute_group',
   {
     description: 'Execute command on a group of servers',
@@ -1681,7 +1711,7 @@ server.registerTool(
   }
 );
 
-server.registerTool(
+registerToolConditional(
   'ssh_group_manage',
   {
     description: 'Manage server groups (create, update, delete, list)',
@@ -1814,7 +1844,7 @@ server.registerTool(
   }
 );
 
-server.registerTool(
+registerToolConditional(
   'ssh_list_servers',
   {
     description: 'List all configured SSH servers',
@@ -1844,7 +1874,7 @@ server.registerTool(
 );
 
 // New deploy tool for automated deployment
-server.registerTool(
+registerToolConditional(
   'ssh_deploy',
   {
     description: 'Deploy files to remote server with automatic permission handling',
@@ -1945,7 +1975,7 @@ server.registerTool(
 );
 
 // Execute command with sudo support
-server.registerTool(
+registerToolConditional(
   'ssh_execute_sudo',
   {
     description: 'Execute command with sudo on remote server',
@@ -2014,7 +2044,7 @@ server.registerTool(
 );
 
 // Manage command aliases
-server.registerTool(
+registerToolConditional(
   'ssh_command_alias',
   {
     description: 'Manage command aliases for frequently used commands',
@@ -2115,7 +2145,7 @@ server.registerTool(
 );
 
 // Manage hooks
-server.registerTool(
+registerToolConditional(
   'ssh_hooks',
   {
     description: 'Manage automation hooks for SSH operations',
@@ -2207,7 +2237,7 @@ server.registerTool(
 );
 
 // Manage profiles
-server.registerTool(
+registerToolConditional(
   'ssh_profile',
   {
     description: 'Manage SSH Manager profiles for different project types',
@@ -2287,7 +2317,7 @@ server.registerTool(
 );
 
 // Connection management tool
-server.registerTool(
+registerToolConditional(
   'ssh_connection_status',
   {
     description: 'Check status of SSH connections and manage connection pool',
@@ -2404,7 +2434,7 @@ server.registerTool(
 );
 
 // SSH Tunnel Management - Create tunnel
-server.registerTool(
+registerToolConditional(
   'ssh_tunnel_create',
   {
     description: 'Create SSH tunnel (port forwarding or SOCKS proxy)',
@@ -2485,7 +2515,7 @@ server.registerTool(
 );
 
 // List active tunnels
-server.registerTool(
+registerToolConditional(
   'ssh_tunnel_list',
   {
     description: 'List active SSH tunnels',
@@ -2567,7 +2597,7 @@ server.registerTool(
 );
 
 // Close a tunnel
-server.registerTool(
+registerToolConditional(
   'ssh_tunnel_close',
   {
     description: 'Close an SSH tunnel',
@@ -2631,7 +2661,7 @@ server.registerTool(
 );
 
 // Manage SSH host keys
-server.registerTool(
+registerToolConditional(
   'ssh_key_manage',
   {
     description: 'Manage SSH host keys for security verification',
@@ -2876,7 +2906,7 @@ server.registerTool(
 );
 
 // Manage server aliases
-server.registerTool(
+registerToolConditional(
   'ssh_alias',
   {
     description: 'Manage server aliases for easier access',
@@ -2966,7 +2996,7 @@ server.registerTool(
 // BACKUP & RESTORE TOOLS
 // ============================================================================
 
-server.registerTool(
+registerToolConditional(
   'ssh_backup_create',
   {
     description: 'Create backup of database or files on remote server',
@@ -3185,7 +3215,7 @@ server.registerTool(
   }
 );
 
-server.registerTool(
+registerToolConditional(
   'ssh_backup_list',
   {
     description: 'List available backups on remote server',
@@ -3257,7 +3287,7 @@ server.registerTool(
   }
 );
 
-server.registerTool(
+registerToolConditional(
   'ssh_backup_restore',
   {
     description: 'Restore from a backup on remote server',
@@ -3378,7 +3408,7 @@ server.registerTool(
   }
 );
 
-server.registerTool(
+registerToolConditional(
   'ssh_backup_schedule',
   {
     description: 'Schedule automatic backups using cron',
@@ -3501,7 +3531,7 @@ server.registerTool(
 // HEALTH CHECKS & MONITORING TOOLS
 // ============================================================================
 
-server.registerTool(
+registerToolConditional(
   'ssh_health_check',
   {
     description: 'Perform comprehensive health check on remote server',
@@ -3596,7 +3626,7 @@ server.registerTool(
   }
 );
 
-server.registerTool(
+registerToolConditional(
   'ssh_service_status',
   {
     description: 'Check status of services on remote server',
@@ -3675,7 +3705,7 @@ server.registerTool(
   }
 );
 
-server.registerTool(
+registerToolConditional(
   'ssh_process_manager',
   {
     description: 'List, monitor, or kill processes on remote server',
@@ -3824,7 +3854,7 @@ server.registerTool(
   }
 );
 
-server.registerTool(
+registerToolConditional(
   'ssh_alert_setup',
   {
     description: 'Configure health monitoring alerts and thresholds',
@@ -4008,7 +4038,7 @@ server.registerTool(
 // DATABASE MANAGEMENT TOOLS
 // ============================================================================
 
-server.registerTool(
+registerToolConditional(
   'ssh_db_dump',
   {
     description: 'Dump database to file (MySQL, PostgreSQL, MongoDB)',
@@ -4120,7 +4150,7 @@ server.registerTool(
   }
 );
 
-server.registerTool(
+registerToolConditional(
   'ssh_db_import',
   {
     description: 'Import database from SQL file (MySQL, PostgreSQL, MongoDB)',
@@ -4222,7 +4252,7 @@ server.registerTool(
   }
 );
 
-server.registerTool(
+registerToolConditional(
   'ssh_db_list',
   {
     description: 'List databases or tables/collections',
@@ -4347,7 +4377,7 @@ server.registerTool(
   }
 );
 
-server.registerTool(
+registerToolConditional(
   'ssh_db_query',
   {
     description: 'Execute SELECT query on database (read-only, SELECT queries only)',

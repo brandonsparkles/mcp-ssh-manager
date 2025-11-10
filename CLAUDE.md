@@ -51,6 +51,22 @@ ssh-manager codex convert to-toml            # Convert .env to TOML
 ssh-manager codex convert to-env             # Convert TOML to .env
 ```
 
+### Tool Management (NEW in v3.1)
+```bash
+ssh-manager tools list                        # Show all tools and status
+ssh-manager tools configure                   # Interactive configuration wizard
+ssh-manager tools enable <group>              # Enable a tool group
+ssh-manager tools disable <group>             # Disable a tool group
+ssh-manager tools reset                       # Reset to defaults (all tools)
+ssh-manager tools export-claude               # Export auto-approval config
+```
+
+**Tool Groups**: core (5), sessions (4), monitoring (6), backup (4), database (4), advanced (14)
+
+**Modes**: all (37 tools, ~43.5k tokens), minimal (5 tools, ~3.5k tokens), custom (variable)
+
+See [docs/TOOL_MANAGEMENT.md](docs/TOOL_MANAGEMENT.md) for complete guide.
+
 ### Development and Testing
 ```bash
 npm start                                     # Start MCP server (requires stdin)

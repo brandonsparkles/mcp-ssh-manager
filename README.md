@@ -103,6 +103,54 @@ This release adds **12 new MCP tools** transforming SSH Manager into a comprehen
 
 ---
 
+## ⚙️ Tool Management & Context Optimization
+
+**NEW in v3.1**: Reduce Claude Code context usage by 92% with tool activation management!
+
+MCP SSH Manager includes **37 tools** organized into **6 groups**. By default, all tools are enabled, but you can optimize for your specific workflow:
+
+### Quick Setup
+
+```bash
+# Interactive configuration wizard
+ssh-manager tools configure
+
+# View current configuration
+ssh-manager tools list
+
+# Enable/disable specific groups
+ssh-manager tools enable monitoring
+ssh-manager tools disable backup
+```
+
+### Configuration Modes
+
+| Mode | Tools | Context Usage | Best For |
+|------|-------|---------------|----------|
+| **All** (default) | 37 tools | ~43.5k tokens | Full feature set, most users |
+| **Minimal** | 5 tools | ~3.5k tokens | Basic SSH operations only |
+| **Custom** | 5-37 tools | Varies | Tailored to your workflow |
+
+### Tool Groups
+
+- **Core** (5 tools) - Always enabled: list, execute, upload, download, sync
+- **Sessions** (4 tools) - Persistent SSH sessions
+- **Monitoring** (6 tools) - Health checks, service status, process management
+- **Backup** (4 tools) - Database and file backups
+- **Database** (4 tools) - MySQL, PostgreSQL, MongoDB operations
+- **Advanced** (14 tools) - Deployment, sudo, tunnels, groups, aliases, etc.
+
+### Benefits
+
+- **92% context reduction** in minimal mode (~40k tokens saved)
+- **Fewer approval prompts** in Claude Code
+- **Faster loading** and cleaner interface
+- **Auto-approval configuration** export for Claude Code
+
+📖 [**Complete Tool Management Guide →**](docs/TOOL_MANAGEMENT.md)
+
+---
+
 ## 🔍 Alternative Search Terms
 
 Looking for:

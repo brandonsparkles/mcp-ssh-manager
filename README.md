@@ -12,7 +12,7 @@ A powerful Model Context Protocol (MCP) server that enables **Claude Code** and 
 [![npm downloads](https://img.shields.io/npm/dt/mcp-ssh-manager.svg?style=for-the-badge&logo=npm)](https://www.npmjs.com/package/mcp-ssh-manager)
 [![MCP SSH Server](https://img.shields.io/badge/MCP_SSH-Server-orange?style=for-the-badge)](https://github.com/bvisible/mcp-ssh-manager)
 [![SSH MCP](https://img.shields.io/badge/SSH_MCP-Compatible-blue?style=for-the-badge)](https://modelcontextprotocol.io)
-[![Version](https://img.shields.io/badge/Version-3.1.2-brightgreen?style=for-the-badge)](https://github.com/bvisible/mcp-ssh-manager/releases/tag/v3.1.2)
+[![Version](https://img.shields.io/badge/Version-3.1.4-brightgreen?style=for-the-badge)](https://github.com/bvisible/mcp-ssh-manager/releases/tag/v3.1.4)
 [![Claude Code](https://img.shields.io/badge/Claude_Code-Compatible-5A67D8?style=for-the-badge&logo=anthropic)](https://claude.ai/code)
 [![OpenAI Codex](https://img.shields.io/badge/OpenAI_Codex-Compatible-00A67E?style=for-the-badge&logo=openai)](https://openai.com/codex)
 [![MCP](https://img.shields.io/badge/MCP-Server-orange?style=for-the-badge)](https://modelcontextprotocol.io)
@@ -32,16 +32,23 @@ A powerful Model Context Protocol (MCP) server that enables **Claude Code** and 
 
 ---
 
-## 🎉 What's New in v3.1.2
+## 🎉 What's New in v3.1.4
 
-**Windows Compatibility Fix** (Released: February 9, 2026)
+**Windows SSH Host Support** (Released: February 22, 2026)
 
-- **🪟 Windows support**: Fixed crash on Windows where `process.env.HOME` is undefined ([#8](https://github.com/bvisible/mcp-ssh-manager/issues/8))
-- Now uses `os.homedir()` for cross-platform compatibility (Linux, macOS, Windows)
+- **🪟 Windows SSH host fix**: Commands no longer fail on Windows hosts running OpenSSH ([#10](https://github.com/bvisible/mcp-ssh-manager/issues/10))
+- New per-server `platform` config field (`SSH_SERVER_FOO_PLATFORM=windows` or `platform = "windows"` in TOML)
+- When `platform=windows`, the Linux `timeout`/`sh -c` command wrapper is skipped and the SSH library's native timeout is used instead
+- All tools (`ssh_execute`, `ssh_tail`, `ssh_monitor`, `ssh_deploy`, `ssh_execute_sudo`, `ssh_group_execute`) are platform-aware
 
 ---
 
 ## Previous Releases
+
+### v3.1.2 - Windows Compatibility Fix (February 9, 2026)
+
+- **🪟 Windows support**: Fixed crash on Windows where `process.env.HOME` is undefined ([#8](https://github.com/bvisible/mcp-ssh-manager/issues/8))
+- Now uses `os.homedir()` for cross-platform compatibility (Linux, macOS, Windows)
 
 ### v3.1.0 - Tool Activation System (November 15, 2025)
 
@@ -342,6 +349,14 @@ user = "deploy"
 key_path = "~/.ssh/staging_key"
 port = 2222
 default_dir = "/home/deploy/app"
+
+[ssh_servers.winhost]
+host = "192.168.1.90"
+user = "svc-ssh"
+key_path = "~/.ssh/winhost_key"
+port = 2222
+platform = "windows"
+description = "Windows host via OpenSSH"
 ```
 
 💡 **See [examples/codex-ssh-config.example.toml](examples/codex-ssh-config.example.toml) for more complete examples!**
@@ -542,8 +557,9 @@ SSH_SERVER_[NAME]_KEYPATH=~/.ssh/key  # For SSH key auth
 SSH_SERVER_[NAME]_PORT=22  # Optional, defaults to 22
 SSH_SERVER_[NAME]_DEFAULT_DIR=/path/to/dir  # Optional, default working directory
 SSH_SERVER_[NAME]_DESCRIPTION=Description  # Optional
+SSH_SERVER_[NAME]_PLATFORM=windows  # Optional: "linux" (default) or "windows"
 
-# Example
+# Example: Linux server
 SSH_SERVER_PRODUCTION_HOST=prod.example.com
 SSH_SERVER_PRODUCTION_USER=admin
 SSH_SERVER_PRODUCTION_PASSWORD=secure_password
@@ -551,6 +567,14 @@ SSH_SERVER_PRODUCTION_PORT=22
 SSH_SERVER_PRODUCTION_DEFAULT_DIR=/var/www/html
 SSH_SERVER_PRODUCTION_DESCRIPTION=Production Server
 SSH_SERVER_PRODUCTION_SUDO_PASSWORD=secure_sudo_pass  # Optional, for automated deployments
+
+# Example: Windows server (OpenSSH for Windows)
+SSH_SERVER_WINHOST_HOST=192.168.1.90
+SSH_SERVER_WINHOST_USER=svc-ssh
+SSH_SERVER_WINHOST_KEYPATH=~/.ssh/winhost_key
+SSH_SERVER_WINHOST_PORT=2222
+SSH_SERVER_WINHOST_PLATFORM=windows
+SSH_SERVER_WINHOST_DESCRIPTION=Windows host via OpenSSH
 ```
 
 ### Server Management Tool
@@ -819,7 +843,8 @@ Made with ❤️ for the Claude Code community
 ### Command Timeout
 - The timeout parameter for SSH commands is advisory only
 - Due to SSH2 library limitations, commands may continue running on the server even after timeout
-- For critical timeout needs, use the system's `timeout` command directly in your command
+- On Linux/macOS hosts, a system `timeout` wrapper is used for reliable command termination
+- **Windows hosts**: Set `PLATFORM=windows` in your server config to skip the Linux `timeout`/`sh -c` wrapper (which is incompatible with Windows OpenSSH)
 
 ### SSH Sync (rsync)
 - Password authentication requires `sshpass` to be installed

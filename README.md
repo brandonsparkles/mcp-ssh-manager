@@ -12,7 +12,7 @@ A powerful Model Context Protocol (MCP) server that enables **Claude Code** and 
 [![npm downloads](https://img.shields.io/npm/dt/mcp-ssh-manager.svg?style=for-the-badge&logo=npm)](https://www.npmjs.com/package/mcp-ssh-manager)
 [![MCP SSH Server](https://img.shields.io/badge/MCP_SSH-Server-orange?style=for-the-badge)](https://github.com/bvisible/mcp-ssh-manager)
 [![SSH MCP](https://img.shields.io/badge/SSH_MCP-Compatible-blue?style=for-the-badge)](https://modelcontextprotocol.io)
-[![Version](https://img.shields.io/badge/Version-3.1.4-brightgreen?style=for-the-badge)](https://github.com/bvisible/mcp-ssh-manager/releases/tag/v3.1.4)
+[![Version](https://img.shields.io/badge/Version-3.1.5-brightgreen?style=for-the-badge)](https://github.com/bvisible/mcp-ssh-manager/releases/tag/v3.1.5)
 [![Claude Code](https://img.shields.io/badge/Claude_Code-Compatible-5A67D8?style=for-the-badge&logo=anthropic)](https://claude.ai/code)
 [![OpenAI Codex](https://img.shields.io/badge/OpenAI_Codex-Compatible-00A67E?style=for-the-badge&logo=openai)](https://openai.com/codex)
 [![MCP](https://img.shields.io/badge/MCP-Server-orange?style=for-the-badge)](https://modelcontextprotocol.io)
@@ -32,18 +32,26 @@ A powerful Model Context Protocol (MCP) server that enables **Claude Code** and 
 
 ---
 
-## 🎉 What's New in v3.1.4
+## 🎉 What's New in v3.1.5
 
-**Windows SSH Host Support** (Released: February 22, 2026)
+**SSH Agent & Passphrase-Protected Keys Support** (Released: March 5, 2026)
+
+- **🔑 SSH Agent support**: Automatically uses `ssh-agent` when `SSH_AUTH_SOCK` is available — passphrase-protected keys work transparently
+- **🔐 Passphrase configuration**: New `passphrase` field for both `.env` (`SSH_SERVER_FOO_PASSPHRASE`) and TOML (`passphrase = "..."`) formats
+- **🔄 No regression**: Private keys are always passed to the connection alongside the agent — unencrypted keys continue to work even if not loaded in the agent
+
+Thanks to [@snjax](https://github.com/snjax) for the original contribution ([#12](https://github.com/bvisible/mcp-ssh-manager/pull/12)).
+
+---
+
+## Previous Releases
+
+### v3.1.4 - Windows SSH Host Support (February 22, 2026)
 
 - **🪟 Windows SSH host fix**: Commands no longer fail on Windows hosts running OpenSSH ([#10](https://github.com/bvisible/mcp-ssh-manager/issues/10))
 - New per-server `platform` config field (`SSH_SERVER_FOO_PLATFORM=windows` or `platform = "windows"` in TOML)
 - When `platform=windows`, the Linux `timeout`/`sh -c` command wrapper is skipped and the SSH library's native timeout is used instead
 - All tools (`ssh_execute`, `ssh_tail`, `ssh_monitor`, `ssh_deploy`, `ssh_execute_sudo`, `ssh_group_execute`) are platform-aware
-
----
-
-## Previous Releases
 
 ### v3.1.2 - Windows Compatibility Fix (February 9, 2026)
 

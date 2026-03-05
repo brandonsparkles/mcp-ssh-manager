@@ -164,13 +164,8 @@ import { loadToolConfig, isToolEnabled } from './tool-config-manager.js';
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
-// Ensure .env file exists (create empty if missing)
-const envFilePath = path.join(__dirname, '..', '.env');
-if (!fs.existsSync(envFilePath)) {
-  fs.writeFileSync(envFilePath, '# MCP SSH Manager - Server Configuration\n# See .env.example for configuration reference\n', 'utf8');
-}
-
 // Load environment variables (for backward compatibility)
+const envFilePath = path.join(__dirname, '..', '.env');
 dotenv.config({ path: envFilePath });
 
 // Initialize logger

@@ -107,18 +107,10 @@ class SSHManager {
       const keyPath = this.config.keyPath || this.config.keypath;
       if (keyPath) {
         const resolvedKeyPath = keyPath.replace('~', os.homedir());
-        const keyData = fs.readFileSync(resolvedKeyPath);
-        const passphrase = this.config.passphrase;
-
-        if (passphrase) {
-          // Passphrase provided — pass key directly with passphrase
-          connConfig.privateKey = keyData;
-          connConfig.passphrase = passphrase;
-        } else if (!connConfig.agent) {
-          // No passphrase, no agent — pass key and hope it's unencrypted
-          connConfig.privateKey = keyData;
+        connConfig.privateKey = fs.readFileSync(resolvedKeyPath);
+        if (this.config.passphrase) {
+          connConfig.passphrase = this.config.passphrase;
         }
-        // If agent is available and no passphrase — let agent handle the key
       } else if (this.config.password) {
         connConfig.password = this.config.password;
       }

@@ -251,6 +251,10 @@ const KEEPALIVE_INTERVAL = 5 * 60 * 1000;
 // Map to store keepalive intervals
 const keepaliveIntervals = new Map();
 
+// Extra grace window so the remote `timeout` wrapper can exit cleanly
+// and return its timeout exit code before the local SSH exec timeout fires.
+const WRAPPED_COMMAND_TIMEOUT_GRACE_MS = 5000;
+
 // Map to track proxy jump dependencies (target -> jump server)
 const jumpDependencies = new Map();
 
@@ -277,7 +281,10 @@ async function execCommandWithTimeout(ssh, command, options = {}, timeoutMs = 30
     const wrappedCommand = `timeout ${timeoutSeconds} sh -c '${command.replace(/'/g, '\'\\\'\'')}'`;
 
     try {
-      const result = await ssh.execCommand(wrappedCommand, otherOptions);
+      const result = await ssh.execCommand(wrappedCommand, {
+        ...otherOptions,
+        timeout: timeoutMs + WRAPPED_COMMAND_TIMEOUT_GRACE_MS
+      });
 
       // Check if timeout occurred (exit code 124 on Linux, 124 or 143 on Mac)
       if (result.code === 124 || result.code === 143) {

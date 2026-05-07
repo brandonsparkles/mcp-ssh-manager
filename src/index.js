@@ -268,12 +268,31 @@ function loadServerConfig() {
 // Execute command with timeout - using child_process timeout for real kill
 async function execCommandWithTimeout(ssh, command, options = {}, timeoutMs = 30000) {
   // Pass through rawCommand and platform if specified
-  const { rawCommand, platform, ...otherOptions } = options;
-  const isWindows = platform === 'windows';
+  const { rawCommand, platform = 'linux', ...otherOptions } = options;
 
-  // For commands that might hang, use the system's timeout command if available
-  // Skip for Windows hosts where the Linux timeout/sh commands don't exist
-  const useSystemTimeout = timeoutMs > 0 && timeoutMs < 300000 && !rawCommand && !isWindows; // Max 5 minutes, not for raw/Windows commands
+  // Windows targets: encode the command as PowerShell -EncodedCommand (UTF-16
+  // LE base64). This is the standard approach (used by Ansible / Chef / Puppet)
+  // because cmd.exe's quoting rules are inconsistent across versions and break
+  // commands containing $vars, $(...) subexpressions, double-quoted strings,
+  // pipes, etc. Base64 sidesteps all escape issues entirely.
+  if (platform === 'windows' && !rawCommand) {
+    // Suppress progress (avoids CLIXML sentinels in stderr) + force UTF-8 stdout
+    const prelude = `$ProgressPreference='SilentlyContinue'; [Console]::OutputEncoding=[System.Text.Encoding]::UTF8;`;
+    const fullPSCommand = `${prelude} ${command}`;
+    const utf16le = Buffer.from(fullPSCommand, 'utf16le');
+    const b64 = utf16le.toString('base64');
+    // -OutputFormat Text prevents stderr/info streams from being CLIXML-encoded
+    const wrappedCommand = `powershell -NoProfile -OutputFormat Text -EncodedCommand ${b64}`;
+    return ssh.execCommand(wrappedCommand, { ...otherOptions, execOptions: { ...(otherOptions.execOptions || {}) } });
+  }
+
+  // For commands that might hang, use the system's timeout command if available.
+  // Note: the `!isWindows` guard that existed here previously is intentionally
+  // removed. Windows targets return early above (the `if (platform === 'windows'
+  // && !rawCommand)` block), so by the time execution reaches this line it is
+  // guaranteed to be a Linux/macOS target. The behaviour is identical; the old
+  // guard was made redundant by the early-return path.
+  const useSystemTimeout = timeoutMs > 0 && timeoutMs < 300000 && !rawCommand; // Max 5 minutes, not for raw commands
 
   if (useSystemTimeout) {
     // Wrap command with timeout command (works on Linux/Mac)
@@ -617,12 +636,25 @@ registerToolConditional(
       const servers = loadServerConfig();
       const serverConfig = servers[serverName.toLowerCase()];
       const workingDir = cwd || serverConfig?.default_dir;
-      const fullCommand = workingDir ? `cd ${workingDir} && ${expandedCommand}` : expandedCommand;
+      const platform = serverConfig?.platform || 'linux';
+
+      // Build cwd-prefixed command using platform-appropriate syntax
+      let fullCommand;
+      if (workingDir) {
+        if (platform === 'windows') {
+          const escapedDir = workingDir.replace(/'/g, "''");
+          fullCommand = `Set-Location '${escapedDir}'; ${expandedCommand}`;
+        } else {
+          fullCommand = `cd ${workingDir} && ${expandedCommand}`;
+        }
+      } else {
+        fullCommand = expandedCommand;
+      }
 
       // Log command execution
       const startTime = logger.logCommand(serverName, fullCommand, workingDir);
 
-      const result = await execCommandWithTimeout(ssh, fullCommand, { platform: serverConfig?.platform }, cappedTimeout);
+      const result = await execCommandWithTimeout(ssh, fullCommand, { platform }, cappedTimeout);
 
       // Log command result
       logger.logCommandResult(serverName, fullCommand, startTime, result);
@@ -1796,13 +1828,27 @@ registerToolConditional(
         async (serverName) => {
           const ssh = await getConnection(serverName);
 
-          // Build full command with cwd if provided
+          // Build full command with cwd if provided.
+          // Use platform-appropriate syntax: Set-Location for Windows (cmd.exe
+          // does not support `cd && `) vs cd && for Linux/macOS.
           const servers = loadServerConfig();
           const serverConfig = servers[serverName.toLowerCase()];
           const workingDir = cwd || serverConfig?.default_dir;
-          const fullCommand = workingDir ? `cd ${workingDir} && ${command}` : command;
+          const platform = serverConfig?.platform || 'linux';
+          let fullCommand;
+          if (workingDir) {
+            if (platform === 'windows') {
+              // Single-quote escaping: replace ' with '' (PowerShell convention)
+              const escapedDir = workingDir.replace(/'/g, "''");
+              fullCommand = `Set-Location '${escapedDir}'; ${command}`;
+            } else {
+              fullCommand = `cd ${workingDir} && ${command}`;
+            }
+          } else {
+            fullCommand = command;
+          }
 
-          const execResult = await execCommandWithTimeout(ssh, fullCommand, { platform: serverConfig?.platform }, 30000);
+          const execResult = await execCommandWithTimeout(ssh, fullCommand, { platform }, 30000);
 
           return {
             stdout: execResult.stdout,
@@ -2182,13 +2228,24 @@ registerToolConditional(
       }
 
       // Add working directory if specified
+      const platform = serverConfig?.platform || 'linux';
       if (cwd) {
-        fullCommand = `cd ${cwd} && ${fullCommand}`;
+        if (platform === 'windows') {
+          const escapedDir = cwd.replace(/'/g, "''");
+          fullCommand = `Set-Location '${escapedDir}'; ${fullCommand}`;
+        } else {
+          fullCommand = `cd ${cwd} && ${fullCommand}`;
+        }
       } else if (serverConfig?.default_dir) {
-        fullCommand = `cd ${serverConfig.default_dir} && ${fullCommand}`;
+        if (platform === 'windows') {
+          const escapedDir = serverConfig.default_dir.replace(/'/g, "''");
+          fullCommand = `Set-Location '${escapedDir}'; ${fullCommand}`;
+        } else {
+          fullCommand = `cd ${serverConfig.default_dir} && ${fullCommand}`;
+        }
       }
 
-      const result = await execCommandWithTimeout(ssh, fullCommand, { platform: serverConfig?.platform }, timeout);
+      const result = await execCommandWithTimeout(ssh, fullCommand, { platform }, timeout);
 
       // Mask password in output for security
       const maskedCommand = fullCommand.replace(/echo "[^"]+" \| sudo -S/, 'sudo');

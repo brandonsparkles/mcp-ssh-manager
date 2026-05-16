@@ -5,6 +5,18 @@ All notable changes to MCP SSH Manager will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [3.4.1] - 2026-05-16
+
+### Fixed
+
+- **SSH handshake failing against OpenSSH 9.x servers (Debian 12 / Ubuntu 24.04)** ([#32](https://github.com/bvisible/mcp-ssh-manager/pull/32) — thanks @YoungHong1992)
+  - The hardcoded algorithm list in `src/ssh-manager.js` was missing modern algorithms required by OpenSSH 9.x. The `ssh2` lib would fail the key-exchange phase against stock Debian 12 / Ubuntu 24.04 servers because no common KEX algorithm could be negotiated.
+  - **KEX** — added `curve25519-sha256`, `curve25519-sha256@libssh.org`, `diffie-hellman-group15-sha512`, `diffie-hellman-group16-sha512`. `curve25519-sha256` is now OpenSSH's preferred default since 6.5.
+  - **Server host key** — added `rsa-sha2-512` and `rsa-sha2-256` (RFC 8332). OpenSSH 8.2+ deprecates the SHA-1-based `ssh-rsa` signature algorithm in the default offer; without SHA-2 variants, RSA host keys could no longer be verified.
+  - **Cipher** — added `aes128-gcm@openssh.com` and `aes256-gcm@openssh.com` at the head of the list (preferred GCM variants on modern OpenSSH; the plain `aes*-gcm` names were already present but are not what OpenSSH advertises).
+  - **HMAC** — added `hmac-sha2-256-etm@openssh.com`, `hmac-sha2-512-etm@openssh.com`, `hmac-sha1-etm@openssh.com`. Encrypt-then-MAC is both faster and cryptographically stronger than encrypt-and-MAC; OpenSSH prefers ETM variants when both peers support them.
+  - **Fully backward-compatible** — every legacy algorithm previously in the list (`diffie-hellman-group14-sha1`, `ssh-rsa`, CBC ciphers, plain `hmac-sha*`) is preserved at lower preference. Connections to older servers (CentOS 7, Debian 10, AIX, network gear with legacy SSH stacks) continue to work unchanged.
+
 ## [3.4.0] - 2026-05-07
 
 ### Added

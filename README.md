@@ -6,7 +6,7 @@ A Model Context Protocol (MCP) server that enables **Claude Code** and **OpenAI 
 
 [![npm version](https://img.shields.io/npm/v/mcp-ssh-manager.svg?style=for-the-badge&logo=npm)](https://www.npmjs.com/package/mcp-ssh-manager)
 [![npm downloads](https://img.shields.io/npm/dt/mcp-ssh-manager.svg?style=for-the-badge&logo=npm)](https://www.npmjs.com/package/mcp-ssh-manager)
-[![Version](https://img.shields.io/badge/Version-3.4.0-brightgreen?style=for-the-badge)](https://github.com/bvisible/mcp-ssh-manager/releases/tag/v3.4.0)
+[![Version](https://img.shields.io/badge/Version-3.4.1-brightgreen?style=for-the-badge)](https://github.com/bvisible/mcp-ssh-manager/releases/tag/v3.4.1)
 [![Claude Code](https://img.shields.io/badge/Claude_Code-Compatible-5A67D8?style=for-the-badge&logo=anthropic)](https://claude.ai/code)
 [![OpenAI Codex](https://img.shields.io/badge/OpenAI_Codex-Compatible-00A67E?style=for-the-badge&logo=openai)](https://openai.com/codex)
 [![MCP](https://img.shields.io/badge/MCP-Server-orange?style=for-the-badge)](https://modelcontextprotocol.io)
@@ -20,27 +20,29 @@ A Model Context Protocol (MCP) server that enables **Claude Code** and **OpenAI 
 
 ---
 
-## 🎉 What's New in v3.4.0
+## 🎉 What's New in v3.4.1
 
-**Full Windows OpenSSH support + shell-agnostic session sync** (Released: May 7, 2026)
+**Modern OpenSSH 9.x compatibility** (Released: May 16, 2026)
 
-- **🪟 Windows OpenSSH targets — encoding & syntax fixes** ([#31](https://github.com/bvisible/mcp-ssh-manager/pull/31))
-  - **Mojibake fix** — Commands on Windows hosts no longer inherit the OEM code page (CP950, CP932, CP1252…). Payloads are now wrapped as `powershell -NoProfile -OutputFormat Text -EncodedCommand <utf16le-base64>` (the same approach used by Ansible / Chef / Puppet for Windows remote execution), sidestepping every `cmd.exe` quoting and code-page issue
-  - **`cd && ` syntax fix** — `cd ${workingDir} && ${cmd}` is invalid in `cmd.exe`; replaced with `Set-Location '${escapedDir}'; ${cmd}` (PowerShell-native, with `'` → `''` escaping) across `ssh_execute`, `ssh_execute_group`, and `ssh_execute_sudo`
-  - Strictly gated behind `platform = "windows"` — Linux/macOS targets take the exact same code path as before, zero risk of regression
-  - Thanks [@WenKingSu](https://github.com/WenKingSu) for the clean, well-documented patch
-- **🎯 Marker-based SSH session sync — replaces fragile prompt detection** ([#30](https://github.com/bvisible/mcp-ssh-manager/pull/30))
-  - The previous `/[$#>]\s*$/` regex broke on custom prompts, ANSI color codes, multiline prompts, slow shells, `.bashrc` noise, AIX-style login flows — `ssh_session_start` would frequently fail with "Timeout waiting for shell prompt"
-  - Now uses **UUID v4 markers** as protocol boundaries: each command is wrapped with a unique end marker (`set +e; <cmd>; __mcp_status=$?; printf '\n<marker>:%s\n' "$__mcp_status"`), and the PTY is opened with `ECHO: 0` so the buffer contains only command output
-  - **Bonus**: sessions now report **real exit codes** captured from `$?` instead of the previous `!output.includes('command not found')` heuristic
-  - Resolves [#20](https://github.com/bvisible/mcp-ssh-manager/issues/20) and supersedes the proposed configurable `prompt_pattern` approach by making the problem disappear entirely — no per-server config required
-  - Thanks [@MakksSh](https://github.com/MakksSh) for the precise root-cause analysis and the clean refactor
+- **🔐 Expanded SSH algorithm list — handshake against OpenSSH 9.x out of the box** ([#32](https://github.com/bvisible/mcp-ssh-manager/pull/32))
+  - The hardcoded algorithm list in `src/ssh-manager.js` was missing modern algorithms used by **OpenSSH 9.x** servers shipped with **Debian 12** and **Ubuntu 24.04**, causing the `ssh2` lib to fail the key-exchange phase against stock distributions
+  - **KEX**: added `curve25519-sha256` (+`@libssh.org`), `diffie-hellman-group15-sha512` and `diffie-hellman-group16-sha512`
+  - **Server host key**: added `rsa-sha2-512` and `rsa-sha2-256` (RFC 8332 — required since OpenSSH 8.2 deprecated `ssh-rsa` SHA-1 by default)
+  - **Cipher**: added `aes128-gcm@openssh.com` and `aes256-gcm@openssh.com` (preferred GCM variants on modern servers)
+  - **HMAC**: added `hmac-sha2-256-etm@openssh.com`, `hmac-sha2-512-etm@openssh.com`, `hmac-sha1-etm@openssh.com` (encrypt-then-MAC — both faster and cryptographically stronger than encrypt-and-MAC)
+  - **Backward-compatible by design** — all legacy algorithms (`diffie-hellman-group14-sha1`, `ssh-rsa`, CBC ciphers, plain `hmac-sha*`) are preserved at lower preference, so older servers (CentOS 7, Debian 10…) keep working unchanged
+  - Thanks [@YoungHong1992](https://github.com/YoungHong1992) for the well-scoped, well-ordered patch
 
-[Read full changelog →](CHANGELOG.md#340---2026-05-07)
+[Read full changelog →](CHANGELOG.md#341---2026-05-16)
 
 ---
 
 ## Previous Releases
+
+### v3.4.0 - Windows OpenSSH support + shell-agnostic session sync (May 7, 2026)
+
+- **🪟 Windows OpenSSH encoding & syntax fixes** — UTF-16LE base64 PowerShell payloads (Ansible-style) + `Set-Location` replacing `cd && ` ([#31](https://github.com/bvisible/mcp-ssh-manager/pull/31), thanks [@WenKingSu](https://github.com/WenKingSu))
+- **🎯 Marker-based SSH session sync** — UUID v4 protocol boundaries with `ECHO: 0` PTY, real `$?` exit codes, no more "Timeout waiting for shell prompt" on custom/slow/AIX shells ([#30](https://github.com/bvisible/mcp-ssh-manager/pull/30), thanks [@MakksSh](https://github.com/MakksSh))
 
 ### v3.3.0 - ProxyCommand & Critical Fixes (May 2, 2026)
 

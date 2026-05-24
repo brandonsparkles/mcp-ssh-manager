@@ -62,6 +62,6 @@ id_ed25519*
 
 # SSH Manager logs and history
 .ssh-manager.log
-.ssh-command-history.json
+.ssh-command-history*.json
 .server-groups.json
 archived/

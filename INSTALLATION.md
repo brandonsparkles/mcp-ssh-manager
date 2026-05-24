@@ -81,7 +81,7 @@ SSH_SERVER_DEV1_DEFAULT_DIR=/var/www
 
 ```bash
 ssh-manager --version
-# Should show: SSH Manager CLI v2.0.0
+# Should show: SSH Manager CLI v3.1.0
 ```
 
 ### 2. Check MCP Installation
@@ -113,8 +113,12 @@ source ~/.bashrc
 ### Servers not showing
 
 ```bash
-# Check .env file location
-export SSH_MANAGER_ENV="$(pwd)/.env"
+# Check default env location
+echo "$HOME/.ssh-manager/.env"
+ssh-manager server list
+
+# If your env file is elsewhere, point to it explicitly
+export SSH_MANAGER_ENV="/path/to/.env"
 ssh-manager server list
 ```
 
@@ -164,6 +168,7 @@ claude mcp remove ssh-manager
 
 # Uninstall CLI
 sudo rm /usr/local/bin/ssh-manager
+rm -rf ~/.ssh-manager-cli
 
 # Remove configuration
 rm -rf ~/.ssh-manager

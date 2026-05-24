@@ -5,6 +5,29 @@ import crypto from 'crypto';
  * Deploy helper functions for secure file deployment
  */
 
+function shellQuote(value) {
+  const quote = String.fromCharCode(39);
+  return quote + String(value).replace(/'/g, quote + '\\' + quote + quote) + quote;
+}
+
+function assertSafeOwner(owner) {
+  if (owner && !/^[A-Za-z_][A-Za-z0-9_-]*[$]?(?::[A-Za-z_][A-Za-z0-9_-]*[$]?)?$/.test(owner)) {
+    throw new Error('owner contains unsafe characters');
+  }
+}
+
+function assertSafePermissions(permissions) {
+  if (permissions && !/^[0-7]{3,4}$/.test(String(permissions))) {
+    throw new Error('permissions must be an octal mode such as 644 or 0755');
+  }
+}
+
+function assertSafeServiceName(service) {
+  if (service && !/^[A-Za-z0-9_.@:-]+$/.test(service)) {
+    throw new Error('restart service name contains unsafe characters');
+  }
+}
+
 /**
  * Generate a unique temporary filename
  */
@@ -28,6 +51,13 @@ export function buildDeploymentStrategy(remotePath, options = {}) {
     restart = null
   } = options;
 
+  if (sudoPassword) {
+    throw new Error('Password-based sudo is not supported because it exposes secrets in remote command text; configure NOPASSWD sudo or run the deploy as a privileged user.');
+  }
+  assertSafeOwner(owner);
+  assertSafePermissions(permissions);
+  assertSafeServiceName(restart);
+
   const strategy = {
     steps: [],
     requiresSudo: false
@@ -37,7 +67,7 @@ export function buildDeploymentStrategy(remotePath, options = {}) {
   if (backup) {
     strategy.steps.push({
       type: 'backup',
-      command: `if [ -f "${remotePath}" ]; then cp "${remotePath}" "${remotePath}.bak.$(date +%Y%m%d_%H%M%S)"; fi`
+      command: `if [ -f ${shellQuote(remotePath)} ]; then cp ${shellQuote(remotePath)} ${shellQuote(`${remotePath}.bak`)}.$(date +%Y%m%d_%H%M%S); fi`
     });
   }
 
@@ -52,11 +82,9 @@ export function buildDeploymentStrategy(remotePath, options = {}) {
   }
 
   // Step 3: Copy from temp to final location
-  const copyCmd = needsSudo && sudoPassword ?
-    `echo "${sudoPassword}" | sudo -S cp {{tempFile}} "${remotePath}"` :
-    needsSudo ?
-      `sudo cp {{tempFile}} "${remotePath}"` :
-      `cp {{tempFile}} "${remotePath}"`;
+  const copyCmd = needsSudo ?
+    `sudo -n cp {{tempFileQuoted}} ${shellQuote(remotePath)}` :
+    `cp {{tempFileQuoted}} ${shellQuote(remotePath)}`;
 
   strategy.steps.push({
     type: 'copy',
@@ -65,25 +93,17 @@ export function buildDeploymentStrategy(remotePath, options = {}) {
 
   // Step 4: Set ownership if specified
   if (owner) {
-    const chownCmd = sudoPassword ?
-      `echo "${sudoPassword}" | sudo -S chown ${owner} "${remotePath}"` :
-      `sudo chown ${owner} "${remotePath}"`;
-
     strategy.steps.push({
       type: 'chown',
-      command: chownCmd
+      command: `sudo -n chown ${shellQuote(owner)} ${shellQuote(remotePath)}`
     });
   }
 
   // Step 5: Set permissions if specified
   if (permissions) {
-    const chmodCmd = sudoPassword ?
-      `echo "${sudoPassword}" | sudo -S chmod ${permissions} "${remotePath}"` :
-      `sudo chmod ${permissions} "${remotePath}"`;
-
     strategy.steps.push({
       type: 'chmod',
-      command: chmodCmd
+      command: `sudo -n chmod ${shellQuote(permissions)} ${shellQuote(remotePath)}`
     });
   }
 
@@ -91,14 +111,14 @@ export function buildDeploymentStrategy(remotePath, options = {}) {
   if (restart) {
     strategy.steps.push({
       type: 'restart',
-      command: restart
+      command: `sudo -n systemctl restart ${shellQuote(restart)}`
     });
   }
 
   // Step 7: Cleanup temp file
   strategy.steps.push({
     type: 'cleanup',
-    command: 'rm -f {{tempFile}}'
+    command: 'rm -f {{tempFileQuoted}}'
   });
 
   return strategy;
@@ -159,7 +179,7 @@ export function createBatchDeployScript(deployments) {
     script.push(`# File ${index + 1}: ${deploy.localPath} -> ${deploy.remotePath}`);
     deploy.strategy.steps.forEach(step => {
       if (step.type !== 'cleanup') {
-        script.push(step.command.replace('{{tempFile}}', deploy.tempFile));
+        script.push(step.command.replace('{{tempFileQuoted}}', shellQuote(deploy.tempFile)));
       }
     });
     script.push('');
@@ -168,7 +188,7 @@ export function createBatchDeployScript(deployments) {
   // Cleanup all temp files at the end
   script.push('# Cleanup temporary files');
   deployments.forEach(deploy => {
-    script.push(`rm -f ${deploy.tempFile}`);
+    script.push(`rm -f ${shellQuote(deploy.tempFile)}`);
   });
 
   return script.join('\n');

@@ -5,26 +5,35 @@
 TOOLS_CONFIG="${HOME}/.ssh-manager/tools-config.json"
 
 # Tool group definitions (matching src/tool-registry.js)
+get_total_tool_count() {
+    local total=0
+    local group
+    for group in core sessions monitoring backup database advanced; do
+        total=$((total + $(get_tool_count "$group")))
+    done
+    echo "$total"
+}
+
 get_tool_count() {
     case "$1" in
-        core) echo "5" ;;
+        core) echo "6" ;;
         sessions) echo "4" ;;
         monitoring) echo "6" ;;
         backup) echo "4" ;;
         database) echo "4" ;;
-        advanced) echo "14" ;;
+        advanced) echo "15" ;;
         *) echo "0" ;;
     esac
 }
 
 get_tool_description() {
     case "$1" in
-        core) echo "Essential SSH operations (list, execute, upload, download, sync)" ;;
+        core) echo "Essential SSH operations (list, execute, Python-as-site-user, upload, download, sync)" ;;
         sessions) echo "Persistent SSH sessions with state management" ;;
         monitoring) echo "System health checks, service monitoring, process management, and alerts" ;;
         backup) echo "Automated backup and restore for databases and files" ;;
         database) echo "Database operations (MySQL, PostgreSQL, MongoDB)" ;;
-        advanced) echo "Advanced features (deployment, sudo, tunnels, groups, aliases, hooks, profiles)" ;;
+        advanced) echo "Advanced features (advanced execute overrides, deployment, sudo, tunnels, groups, aliases, hooks, profiles)" ;;
         *) echo "" ;;
     esac
 }
@@ -86,7 +95,7 @@ cmd_tools_list() {
     if [ ! -f "$TOOLS_CONFIG" ]; then
         print_info "No tool configuration found"
         echo ""
-        echo "${GRAY}Default: All 37 tools enabled${NC}"
+        echo "${GRAY}Default: All 39 tools enabled${NC}"
         echo ""
         print_info "Run ${CYAN}ssh-manager tools configure${NC} to customize and reduce context usage"
         return 0
@@ -95,22 +104,22 @@ cmd_tools_list() {
     # Read configuration
     local mode=$(jq -r '.mode // "all"' "$TOOLS_CONFIG" 2>/dev/null || echo "all")
     local enabled_count=0
-    local total_count=37
+    local total_count="$(get_total_tool_count)"
 
     # Calculate enabled count
     case "$mode" in
         all)
-            enabled_count=37
+            enabled_count="$total_count"
             ;;
         minimal)
-            enabled_count=5
+            enabled_count=6
             ;;
         custom)
             # Count enabled tools per group
             for group in core sessions monitoring backup database advanced; do
                 local group_enabled=$(jq -r ".groups.$group.enabled // true" "$TOOLS_CONFIG" 2>/dev/null || echo "true")
                 if [ "$group_enabled" = "true" ]; then
-                    enabled_count=$((enabled_count + TOOL_GROUP_COUNTS[$group]))
+                    enabled_count=$((enabled_count + $(get_tool_count "$group")))
                 fi
             done
             ;;
@@ -170,7 +179,7 @@ cmd_tools_list() {
         print_info "${LIGHTBULB} Tip: Switch to ${CYAN}minimal${NC} mode to reduce context usage by 92%"
         echo "        Run: ${CYAN}ssh-manager tools configure${NC}"
     elif [ "$mode" = "minimal" ]; then
-        print_success "${CHECK} Optimized! Using only 5 core tools (saves ~40k tokens in Claude Code)"
+        print_success "${CHECK} Optimized! Using only 6 core tools (saves ~40k tokens in Claude Code)"
         echo ""
         echo "        To enable more tools: ${CYAN}ssh-manager tools enable <group>${NC}"
     fi
@@ -330,7 +339,7 @@ EOF
 # Reset configuration to defaults
 cmd_tools_reset() {
     if [ -f "$TOOLS_CONFIG" ]; then
-        print_warning "This will delete your tool configuration and enable all 37 tools"
+        print_warning "This will delete your tool configuration and enable all 39 tools"
         echo ""
         if prompt_yes_no "Continue?" "n"; then
             rm -f "$TOOLS_CONFIG"
@@ -350,7 +359,7 @@ cmd_tools_configure() {
     print_header "Tool Configuration Wizard"
 
     echo ""
-    echo "MCP SSH Manager has ${BOLD}37 tools${NC} organized into ${BOLD}6 groups${NC}:"
+    echo "MCP SSH Manager has ${BOLD}39 tools${NC} organized into ${BOLD}6 groups${NC}:"
     echo ""
 
     for group in core sessions monitoring backup database advanced; do
@@ -363,12 +372,12 @@ cmd_tools_configure() {
     echo "Choose configuration mode:"
     echo ""
     echo "  ${GREEN}1) All tools${NC} (recommended for most users)"
-    echo "     ├─ All 37 tools enabled"
+    echo "     ├─ All 39 tools enabled"
     echo "     ├─ Full feature set available"
     echo "     └─ Uses ~43k tokens in Claude Code"
     echo ""
     echo "  ${YELLOW}2) Minimal${NC} (lightweight, core functionality only)"
-    echo "     ├─ Only 5 core tools enabled"
+    echo "     ├─ Only 6 core tools enabled"
     echo "     ├─ Reduces context usage by 92%"
     echo "     └─ Uses ~3.5k tokens in Claude Code"
     echo ""
@@ -399,14 +408,14 @@ cmd_tools_configure() {
     "advanced": { "enabled": false }
   },
   "tools": {},
-  "_comment": "Minimal mode - only 5 core tools enabled"
+  "_comment": "Minimal mode - only 6 core tools enabled"
 }
 EOF
             echo ""
-            print_success "Configuration saved: ${YELLOW}Minimal mode${NC} (5 tools)"
+            print_success "Configuration saved: ${YELLOW}Minimal mode${NC} (6 tools)"
             echo ""
             echo "  ${GREEN}Context savings:${NC} ~40k tokens (92% reduction)"
-            echo "  ${GREEN}Enabled tools:${NC} ssh_list_servers, ssh_execute, ssh_upload, ssh_download, ssh_sync"
+            echo "  ${GREEN}Enabled tools:${NC} ssh_list_servers, ssh_execute, ssh_python_as_user, ssh_upload, ssh_download, ssh_sync"
             ;;
 
         3)
@@ -439,7 +448,7 @@ EOF
                 database="true"
             fi
 
-            if prompt_yes_no "Enable ${CYAN}advanced${NC} group? (14 tools - deployment, sudo, tunnels, etc)" "n"; then
+            if prompt_yes_no "Enable ${CYAN}advanced${NC} group? (15 tools - advanced execute overrides, deployment, sudo, tunnels, etc)" "n"; then
                 advanced="true"
             fi
 
@@ -461,12 +470,12 @@ EOF
 EOF
 
             # Count enabled tools
-            local enabled_count=5  # core
+            local enabled_count=6  # core
             [ "$sessions" = "true" ] && enabled_count=$((enabled_count + 4))
             [ "$monitoring" = "true" ] && enabled_count=$((enabled_count + 6))
             [ "$backup" = "true" ] && enabled_count=$((enabled_count + 4))
             [ "$database" = "true" ] && enabled_count=$((enabled_count + 4))
-            [ "$advanced" = "true" ] && enabled_count=$((enabled_count + 14))
+            [ "$advanced" = "true" ] && enabled_count=$((enabled_count + 15))
 
             echo ""
             print_success "Configuration saved: ${CYAN}Custom mode${NC} ($enabled_count tools enabled)"
@@ -491,7 +500,7 @@ EOF
 }
 EOF
             echo ""
-            print_success "Configuration saved: ${GREEN}All tools mode${NC} (37 tools)"
+            print_success "Configuration saved: ${GREEN}All tools mode${NC} (39 tools)"
             ;;
     esac
 
@@ -529,22 +538,22 @@ cmd_tools_export_claude() {
 
     case "$mode" in
         all)
-            # All 37 tools
-            tools=("ssh_list_servers" "ssh_execute" "ssh_upload" "ssh_download" "ssh_sync"
+            # All 39 tools
+            tools=("ssh_list_servers" "ssh_execute" "ssh_python_as_user" "ssh_upload" "ssh_download" "ssh_sync"
                    "ssh_session_start" "ssh_session_send" "ssh_session_list" "ssh_session_close"
                    "ssh_health_check" "ssh_service_status" "ssh_process_manager" "ssh_monitor" "ssh_tail" "ssh_alert_setup"
                    "ssh_backup_create" "ssh_backup_list" "ssh_backup_restore" "ssh_backup_schedule"
                    "ssh_db_dump" "ssh_db_import" "ssh_db_list" "ssh_db_query"
-                   "ssh_deploy" "ssh_execute_sudo" "ssh_alias" "ssh_command_alias" "ssh_hooks" "ssh_profile"
+                   "ssh_deploy" "ssh_execute_advanced" "ssh_execute_sudo" "ssh_alias" "ssh_command_alias" "ssh_hooks" "ssh_profile"
                    "ssh_connection_status" "ssh_tunnel_create" "ssh_tunnel_list" "ssh_tunnel_close"
                    "ssh_key_manage" "ssh_execute_group" "ssh_group_manage" "ssh_history")
             ;;
         minimal)
-            tools=("ssh_list_servers" "ssh_execute" "ssh_upload" "ssh_download" "ssh_sync")
+            tools=("ssh_list_servers" "ssh_execute" "ssh_python_as_user" "ssh_upload" "ssh_download" "ssh_sync")
             ;;
         custom)
             # Core (always enabled)
-            tools=("ssh_list_servers" "ssh_execute" "ssh_upload" "ssh_download" "ssh_sync")
+            tools=("ssh_list_servers" "ssh_execute" "ssh_python_as_user" "ssh_upload" "ssh_download" "ssh_sync")
 
             # Check each group
             if [ "$(jq -r '.groups.sessions.enabled // false' "$TOOLS_CONFIG")" = "true" ]; then
@@ -564,7 +573,7 @@ cmd_tools_export_claude() {
             fi
 
             if [ "$(jq -r '.groups.advanced.enabled // false' "$TOOLS_CONFIG")" = "true" ]; then
-                tools+=("ssh_deploy" "ssh_execute_sudo" "ssh_alias" "ssh_command_alias" "ssh_hooks" "ssh_profile"
+                tools+=("ssh_deploy" "ssh_execute_advanced" "ssh_execute_sudo" "ssh_alias" "ssh_command_alias" "ssh_hooks" "ssh_profile"
                         "ssh_connection_status" "ssh_tunnel_create" "ssh_tunnel_list" "ssh_tunnel_close"
                         "ssh_key_manage" "ssh_execute_group" "ssh_group_manage" "ssh_history")
             fi

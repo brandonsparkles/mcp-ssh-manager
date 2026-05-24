@@ -11,6 +11,10 @@ import os from 'os';
 import { logger } from './logger.js';
 import { TOOL_GROUPS, findToolGroup, getAllTools } from './tool-registry.js';
 
+function totalToolCount() {
+  return getAllTools().length;
+}
+
 /**
  * Configuration file location
  * User-global only: ~/.ssh-manager/tools-config.json
@@ -43,7 +47,7 @@ export class ToolConfigManager {
           this.config = this.getDefaultConfig();
         } else {
           logger.info(`Tool configuration loaded from ${this.configPath}`);
-          logger.info(`Mode: ${this.config.mode}, Enabled tools: ${this.getEnabledTools().length}/37`);
+          logger.info(`Mode: ${this.config.mode}, Enabled tools: ${this.getEnabledTools().length}/${totalToolCount()}`);
         }
       } else {
         // No config file - default to all tools enabled
@@ -364,7 +368,7 @@ export class ToolConfigManager {
     return {
       mode: this.config.mode,
       configPath: this.configPath,
-      totalTools: 37,
+      totalTools: totalToolCount(),
       enabledCount: enabledTools.length,
       disabledCount: disabledTools.length,
       groups: Object.keys(TOOL_GROUPS).map(groupName => ({

@@ -2,26 +2,34 @@
 
 Get up and running in 5 minutes! 🚀
 
-## 1️⃣ Clone & Install (1 minute)
+## 1️⃣ Install (1 minute)
 
+```bash
+# Recommended: install from npm (installs both binaries)
+npm install -g mcp-ssh-manager
+
+# Available commands after install:
+# - mcp-ssh-manager
+# - ssh-manager
+```
+
+From source (alternative):
 ```bash
 git clone https://github.com/bvisible/mcp-ssh-manager.git
 cd mcp-ssh-manager
 npm install
-cd cli && ./install.sh
+npm link
 ```
 
 ## 2️⃣ Add Your First Server (2 minutes)
 
 ```bash
-# Launch interactive menu
-ssh-manager
+# Add with guided prompts
+ssh-manager server add
 ```
 
-Choose: `1) Server Management` → `1) Add New Server`
-
 Enter:
-- Name: `myserver`
+- Name: `myserver` (letters/digits/underscore only)
 - Host: `your.server.com`
 - Username: `yourusername`
 - Port: `22`
@@ -30,7 +38,11 @@ Enter:
 ## 3️⃣ Install to Claude Code (1 minute)
 
 ```bash
-claude mcp add ssh-manager node $(pwd)/src/index.js
+# If installed globally:
+claude mcp add ssh-manager mcp-ssh-manager
+
+# If running from source:
+claude mcp add ssh-manager node /absolute/path/to/mcp-ssh-manager/src/index.js
 ```
 
 ## 4️⃣ Test It! (1 minute)
@@ -47,7 +59,7 @@ Try these commands:
 "Run 'ls -la' on myserver"
 ```
 
-## 🎉 That's it!
+## 🎉 That's it
 
 You're now connected to your server through Claude Code!
 
@@ -63,12 +75,26 @@ ssh-manager sync push myserver ./app /var/www/  # Upload files
 
 ## 💡 Pro Tips
 
-1. **Set environment variable** in `~/.bashrc` or `~/.zshrc`:
+1. **No env var required by default**:
+   - CLI + MCP both use `~/.ssh-manager/.env` automatically.
+
+2. **Use a custom config path (optional)**:
    ```bash
-   export SSH_MANAGER_ENV="/path/to/your/.env"
+   # CLI .env override
+   export SSH_MANAGER_ENV="/path/to/servers.env"
+
+   # MCP .env override
+   export SSH_ENV_PATH="/path/to/servers.env"
+
+   # TOML override (Codex-style config)
+   export SSH_CONFIG_PATH="/path/to/ssh-config.toml"
    ```
 
-2. **Create shortcuts**:
+3. **Config precedence**:
+   - Environment variables > `.env` > TOML
+   - Set `PREFER_TOML_CONFIG=true` to skip loading `.env`.
+
+4. **Create shortcuts**:
    ```bash
    alias ssm="ssh-manager"
    alias ssm-list="ssh-manager server list"

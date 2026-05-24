@@ -13,10 +13,10 @@ Reduce context usage by 92% with intelligent tool activation. Enable only what y
 
 Install: `npm i -g mcp-ssh-manager`
 
-📦 https://github.com/bvisible/mcp-ssh-manager
+📦 <https://github.com/bvisible/mcp-ssh-manager>
 🌟 Star if useful!
 
-#MCP #ClaudeCode #DevOps #SSH #AI #Automation
+**Hashtags:** #MCP #ClaudeCode #DevOps #SSH #AI #Automation
 
 ---
 
@@ -30,7 +30,7 @@ I've been working on MCP SSH Manager, a Model Context Protocol server that bring
 
 **What is it?**
 
-A complete DevOps automation platform with 37 MCP tools for managing remote SSH servers directly from Claude Code:
+A complete DevOps automation platform with 39 MCP tools for managing remote SSH servers directly from Claude Code:
 
 - 🔧 Core SSH operations (execute, upload, download, sync)
 - 💾 Backup & restore (MySQL, PostgreSQL, MongoDB, files)
@@ -43,7 +43,7 @@ A complete DevOps automation platform with 37 MCP tools for managing remote SSH 
 
 Tool activation system - reduce context usage by **92%**!
 
-- Enable only the tools you need (minimal mode: 5 tools vs all 37)
+- Enable only the tools you need (minimal mode: 6 tools vs all 39)
 - 6 tool groups: Core, Sessions, Monitoring, Backup, Database, Advanced
 - CLI: `ssh-manager tools configure` for interactive setup
 - Export auto-approval configs for Claude Code
@@ -79,9 +79,9 @@ ssh-manager codex setup
 
 **Links:**
 
-- GitHub: https://github.com/bvisible/mcp-ssh-manager
-- NPM: https://www.npmjs.com/package/mcp-ssh-manager
-- Glama.ai: https://glama.ai/mcp/servers/@bvisible/mcp-ssh-manager
+- GitHub: <https://github.com/bvisible/mcp-ssh-manager>
+- NPM: <https://www.npmjs.com/package/mcp-ssh-manager>
+- Glama.ai: <https://glama.ai/mcp/servers/@bvisible/mcp-ssh-manager>
 - Documentation: Full guides for all features
 
 **Features I'm proud of:**
@@ -109,20 +109,20 @@ Hi HN! I built MCP SSH Manager, a comprehensive Model Context Protocol server fo
 
 **What I built:**
 
-37 MCP tools organized into 6 groups:
-- Core (5): SSH execute, upload, download, sync, sudo
+39 MCP tools organized into 6 groups:
+- Core (6): SSH execute, Python-as-site-user, upload, download, sync, list servers
 - Sessions (4): Persistent SSH sessions
 - Monitoring (6): Health checks, service status, process management
 - Backup (4): MySQL/PostgreSQL/MongoDB/file backups with scheduling
 - Database (4): Dumps, imports, queries, table listings
-- Advanced (14): Tunnels, groups, profiles, hooks, aliases
+- Advanced (15): Advanced execute overrides, tunnels, groups, profiles, hooks, aliases
 
 **New in v3.1.0: Tool Activation System**
 
-The biggest challenge was context usage - 37 tools consume ~43.5k tokens. Solution: intelligent tool activation.
+The biggest challenge was context usage - 39 tools consume ~44k tokens. Solution: intelligent tool activation.
 
 - Users can enable only needed tool groups
-- Minimal mode: 5 tools (~3.5k tokens) = 92% reduction
+- Minimal mode: 6 tools (~3.5k tokens) = 92% reduction
 - Interactive CLI: `ssh-manager tools configure`
 - Export auto-approval configs for Claude Code
 
@@ -150,9 +150,9 @@ The biggest challenge was context usage - 37 tools consume ~43.5k tokens. Soluti
 
 **Links:**
 
-- Repo: https://github.com/bvisible/mcp-ssh-manager
-- NPM: https://www.npmjs.com/package/mcp-ssh-manager
-- Docs: https://github.com/bvisible/mcp-ssh-manager#readme
+- Repo: <https://github.com/bvisible/mcp-ssh-manager>
+- NPM: <https://www.npmjs.com/package/mcp-ssh-manager>
+- Docs: <https://github.com/bvisible/mcp-ssh-manager#readme>
 
 Would love HN's feedback! What other DevOps automation would you want accessible from your AI assistant?
 
@@ -196,9 +196,9 @@ And it handles everything - safely and automatically.
 - Comprehensive audit logging
 - Security-first design
 
-Check it out: https://github.com/bvisible/mcp-ssh-manager
+Check it out: <https://github.com/bvisible/mcp-ssh-manager>
 
-#DevOps #AI #Automation #ClaudeCode #SSH #EnterpriseIT #CloudComputing
+**Hashtags:** #DevOps #AI #Automation #ClaudeCode #SSH #EnterpriseIT #CloudComputing
 
 ---
 
@@ -221,7 +221,7 @@ Check it out: https://github.com/bvisible/mcp-ssh-manager
 
 3. **The Tool Activation Challenge**
    - Context token limits
-   - 37 tools = 43.5k tokens
+   - 39 tools = ~44k tokens
    - Solution: Dynamic tool activation
    - 92% reduction achieved
 
@@ -278,7 +278,7 @@ Check it out: https://github.com/bvisible/mcp-ssh-manager
    - First SSH command
 
 4. **Demo: Tool Activation (2 min)**
-   - Show all 37 tools
+   - Show all 39 tools
    - Run `ssh-manager tools configure`
    - Compare context usage
 
@@ -352,22 +352,22 @@ Check it out: https://github.com/bvisible/mcp-ssh-manager
 ## Hashtags to Use
 
 **General:**
-#MCP #ModelContextProtocol #ClaudeCode #OpenAICodex #AI #Automation #DevOps
+- #MCP #ModelContextProtocol #ClaudeCode #OpenAICodex #AI #Automation #DevOps
 
 **Technical:**
-#SSH #RemoteManagement #CloudComputing #Infrastructure #IaC #SRE #Platform
+- #SSH #RemoteManagement #CloudComputing #Infrastructure #IaC #SRE #Platform
 
 **AI-specific:**
-#AITools #LLM #AIAgent #AIAssistant #Anthropic #OpenAI #Claude
+- #AITools #LLM #AIAgent #AIAssistant #Anthropic #OpenAI #Claude
 
 **Community:**
-#OpenSource #JavaScript #NodeJS #TypeScript #NPM #GitHub
+- #OpenSource #JavaScript #NodeJS #TypeScript #NPM #GitHub
 
 ---
 
 ## Key Messages to Emphasize
 
-1. **Most comprehensive** - 37 tools vs competitors' 2-4
+1. **Most comprehensive** - 39 tools vs competitors' 2-4
 2. **Enterprise-ready** - Not just basic SSH, full DevOps platform
 3. **Efficient** - 92% context reduction with tool activation
 4. **Dual support** - Claude Code AND OpenAI Codex

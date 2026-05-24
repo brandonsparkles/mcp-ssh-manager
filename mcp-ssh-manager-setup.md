@@ -1125,7 +1125,7 @@ jobs:
 
 ## 🚀 STEP 3: Installation and Configuration
 
-### Initial installation commands:
+### Initial installation commands
 
 ```bash
 # 1. Go to project directory
@@ -1222,8 +1222,10 @@ After installation:
 ---
 
 **Ready!** Run these commands in Claude Code to create the entire project. 🚀
+
+```python
 , name))
-    
+
     def add_server(self):
         """Add a new server"""
         print(f"\n{Fore.CYAN}=== Add New SSH Server ==={Style.RESET_ALL}\n")
@@ -1434,7 +1436,7 @@ After installation:
 
 def main():
     manager = SSHServerManager()
-    
+
     if len(sys.argv) > 1:
         command = sys.argv[1]
         if command == 'list':
@@ -1459,7 +1461,7 @@ def main():
     else:
         manager.run_interactive()
 
-if __name__ == "__main__":
+if **name** == "**main**":
     main()
 ```
 
@@ -1622,7 +1624,7 @@ id_ed25519*
 
 ### 📌 FILE: README.md
 
-```markdown
+````markdown
 # MCP SSH Manager 🚀
 
 A Model Context Protocol (MCP) server that enables Claude Code to manage multiple SSH connections seamlessly. Features a Python-based CLI for easy server configuration and connection testing.
@@ -1875,11 +1877,11 @@ For issues, questions, or suggestions:
 ---
 
 Made with ❤️ for the Claude Code community
-```
+````
 
 ### 📌 FILE: CONTRIBUTING.md
 
-```markdown
+````markdown
 # Contributing to MCP SSH Manager
 
 First off, thank you for considering contributing to MCP SSH Manager! It's people like you that make this tool better for everyone.
@@ -1994,7 +1996,7 @@ Before submitting a pull request:
 Feel free to open an issue with your question or reach out to the maintainers.
 
 Thank you for contributing! 🎉
-```
+````
 
 ### 📌 FILE: LICENSE
 
@@ -2084,7 +2086,7 @@ jobs:
 
 ## 🚀 ÉTAPE 3: Installation et Configuration
 
-### Commandes d'installation initiale:
+### Commandes d'installation initiale
 
 ```bash
 # 1. Aller dans le dossier du projet

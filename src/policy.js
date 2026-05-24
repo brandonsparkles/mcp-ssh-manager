@@ -29,6 +29,7 @@ export const READONLY_BLOCKED_TOOLS = new Set([
   'ssh_upload',
   'ssh_deploy',
   'ssh_sync',
+  'ssh_python_as_user',
   'ssh_execute_sudo',
   'ssh_backup_create',
   'ssh_backup_restore',
@@ -44,6 +45,7 @@ export const READONLY_BLOCKED_TOOLS = new Set([
 // denylist and the restricted ALLOW/DENY regexes.
 export const COMMAND_BEARING_TOOLS = new Set([
   'ssh_execute',
+  'ssh_execute_advanced',
   'ssh_execute_sudo',
   'ssh_execute_group',
   'ssh_session_send',
@@ -91,6 +93,140 @@ export const READONLY_DENY_REGEX = [
   /curl\s+[^|]*\|\s*(sh|bash)/,
   /wget\s+[^|]*\|\s*(sh|bash)/,
 ];
+
+export function shellQuote(value) {
+  const quote = String.fromCharCode(39);
+  return quote + String(value).replace(/'/g, quote + '\\' + quote + quote) + quote;
+}
+
+export function powershellSingleQuote(value) {
+  return `'${String(value).replace(/'/g, '\'\'')}'`;
+}
+
+export function isValidUnixUser(value) {
+  if (typeof value !== 'string' || value.length === 0) return false;
+  return /^[a-z_][a-z0-9_-]*[$]?$/.test(value);
+}
+
+function inferSiteUserFromPath(pathValue) {
+  if (!pathValue || typeof pathValue !== 'string') return null;
+
+  const wwwMatch = pathValue.match(/^\/var\/www\/([^/]+)\//);
+  if (wwwMatch && isValidUnixUser(wwwMatch[1])) {
+    return wwwMatch[1];
+  }
+
+  const homeMatch = pathValue.match(/^\/home\/([^/]+)\//);
+  if (homeMatch && isValidUnixUser(homeMatch[1])) {
+    return homeMatch[1];
+  }
+
+  return null;
+}
+
+export function resolveSiteUser(serverConfig, workingDir, requestedSiteUser = null) {
+  if (requestedSiteUser) return requestedSiteUser;
+  const configuredSiteUser = serverConfig && (serverConfig.siteUser || serverConfig['site_user']);
+  if (isValidUnixUser(configuredSiteUser)) return configuredSiteUser;
+  return inferSiteUserFromPath(workingDir);
+}
+
+function isAppPath(workingDir) {
+  return typeof workingDir === 'string' && workingDir.startsWith('/var/www/');
+}
+
+export function shouldAutoRunAsSiteUser(command, workingDir) {
+  if (!workingDir || !workingDir.startsWith('/var/www/')) {
+    return false;
+  }
+
+  const cmd = String(command || '').toLowerCase();
+
+  if (/\b(systemctl|service|journalctl|apt|apt-get|yum|dnf|ufw|iptables|reboot|shutdown|varnishadm)\b/.test(cmd)) {
+    return false;
+  }
+
+  if (/\bgit\s+push\b/.test(cmd)) {
+    return false;
+  }
+
+  return true;
+}
+
+export function classifyCommandShape(command) {
+  const cmd = String(command || '').toLowerCase();
+
+  if (/\bphp\s+artisan\b|\bphp\s+bin\/magento\b|\bbin\/magento\b/.test(cmd)) return 'php-app';
+  if (/\bcomposer\b/.test(cmd)) return 'composer';
+  if (/\bnpm\b|\bpnpm\b|\byarn\b/.test(cmd)) return 'node-package';
+  if (/\bpython3?\b|\bpip3?\b/.test(cmd)) return 'python';
+  if (/\bgit\b/.test(cmd)) return 'git';
+  if (/\b(systemctl|service|journalctl)\b/.test(cmd)) return 'service';
+  if (/\b(grep|rg|awk|sed|find)\b/.test(cmd)) return 'search';
+  if (/\b(mysql|psql|mongo|redis-cli)\b/.test(cmd)) return 'database';
+  return 'other';
+}
+
+export function resolveExecutionPlan({ serverName, serverConfig, command, cwd, runAsMode, requestedSiteUser, allowRootAppCommands = false, platform = 'linux' }) {
+  const workingDir = cwd || serverConfig?.defaultDir || serverConfig?.default_dir || null;
+  const normalizedRunAsMode = runAsMode || 'auto';
+
+  if (requestedSiteUser && !isValidUnixUser(requestedSiteUser)) {
+    throw new Error(`Invalid site_user: ${requestedSiteUser}`);
+  }
+
+  const inferredSiteUser = resolveSiteUser(serverConfig, workingDir);
+
+  if (platform === 'windows' && normalizedRunAsMode === 'site_user') {
+    throw new Error('run_as="site_user" is not supported for Windows targets.');
+  }
+
+  let executionUser = 'root';
+  let routingReason = 'explicit_root';
+
+  if (normalizedRunAsMode === 'site_user') {
+    const siteUser = requestedSiteUser || inferredSiteUser;
+    if (!siteUser) {
+      throw new Error(`Unable to determine site user for server "${serverName}". Provide site_user explicitly.`);
+    }
+    executionUser = siteUser;
+    routingReason = requestedSiteUser ? 'explicit_site_user' : 'inferred_site_user';
+  } else if (normalizedRunAsMode === 'auto') {
+    if (requestedSiteUser) {
+      executionUser = requestedSiteUser;
+      routingReason = 'auto_with_explicit_site_user';
+    } else if (shouldAutoRunAsSiteUser(command, workingDir) && inferredSiteUser) {
+      executionUser = inferredSiteUser;
+      routingReason = 'auto_inferred_site_user';
+    } else {
+      routingReason = 'auto_root_fallback';
+    }
+  } else if (normalizedRunAsMode === 'root') {
+    if (!allowRootAppCommands && isAppPath(workingDir) && shouldAutoRunAsSiteUser(command, workingDir)) {
+      throw new Error('Refusing root execution for app-level command under /var/www. Use run_as="auto" or run_as="site_user" (or set allow_root_app_commands=true to override).');
+    }
+  } else if (normalizedRunAsMode !== 'root') {
+    throw new Error(`Invalid run_as value: ${normalizedRunAsMode}`);
+  }
+
+  let fullCommand;
+  if (platform === 'windows') {
+    fullCommand = workingDir ? `Set-Location -LiteralPath ${powershellSingleQuote(workingDir)}; ${command}` : command;
+  } else {
+    const scopedCommand = workingDir ? `cd ${shellQuote(workingDir)} && ${command}` : command;
+    fullCommand = executionUser === 'root'
+      ? scopedCommand
+      : `sudo -u ${shellQuote(executionUser)} bash -lc ${shellQuote(scopedCommand)}`;
+  }
+
+  return {
+    workingDir,
+    executionUser,
+    fullCommand,
+    runAsMode: normalizedRunAsMode,
+    routingReason
+  };
+}
 
 /**
  * Compile a list of regex source strings into RegExp objects.

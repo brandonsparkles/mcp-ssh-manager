@@ -1,242 +1,149 @@
-# SSH Manager Deployment Guide 🚀
+# SSH Manager Deployment Guide
 
 ## Overview
 
-The MCP SSH Manager now includes advanced deployment features that solve common deployment challenges:
+This guide reflects the current `ssh_deploy`, `ssh_execute_sudo`, and `ssh_alias` behavior implemented in:
 
-- ✅ Automatic permission handling
-- ✅ Secure sudo execution
-- ✅ Server aliases for easier access
-- ✅ Batch file deployments
-- ✅ Automatic backups before deployment
+- `src/index.js`
+- `src/deploy-helper.js`
+- `src/server-aliases.js`
 
-## New Tools
+## Tool Capabilities
 
-### 1. `ssh_deploy` - Automated File Deployment
+### `ssh_deploy`
 
-Deploy files with automatic permission handling and backup.
+Deploy one or more local files to remote paths.
 
-#### Basic Usage
-
-```
-"Deploy my config file to production server"
-"Upload all JavaScript files to staging"
-```
-
-#### Advanced Usage with Options
+#### Input schema
 
 ```json
 {
   "server": "production",
   "files": [
     {
-      "local": "/local/path/file.js",
-      "remote": "/var/www/app/file.js"
+      "local": "/local/path/app.js",
+      "remote": "/var/www/app/app.js"
     }
   ],
   "options": {
     "owner": "www-data:www-data",
     "permissions": "644",
     "backup": true,
-    "restart": "systemctl restart nginx"
+    "restart": "nginx",
+    "sudoPassword": "unsupported"
   }
 }
 ```
 
-### 2. `ssh_execute_sudo` - Execute with Sudo
+#### What actually happens per file
 
-Run commands with sudo privileges securely.
+1. Uploads local file to a generated remote temp path:
+   - `/tmp/<basename>_<timestamp>_<randomhex><ext>`
+2. Optionally attempts backup (default `backup: true`):
+   - `<remote>.bak.YYYYMMDD_HHMMSS`
+3. Copies temp file to target path (`cp` or `sudo -n cp` depending on path/options)
+4. Optional ownership update: `sudo -n chown <owner> <remote>`
+5. Optional mode update: `sudo -n chmod <permissions> <remote>`
+6. Optional restart: `sudo -n systemctl restart <service>`
+7. Deletes remote temp file
 
-```
-"Run 'apt update' on production with sudo"
-"Execute 'systemctl restart nginx' as root on staging"
-```
+#### Important limits and validation
 
-### 3. `ssh_alias` - Manage Server Aliases
+- `options.sudoPassword` is **rejected** (password-based sudo is intentionally unsupported).
+- `restart` is a **service name**, not an arbitrary shell command.
+- `permissions` must be octal string (`644`, `0755`, etc.).
+- `owner` allows only safe `user` or `user:group` characters.
+- Each deployment command step runs with a fixed 15s timeout.
+- `options` apply to all files in the request (not per-file options).
+- `backup` failures are non-fatal; other step failures fail deployment.
 
-Create shortcuts for your servers.
+#### Auto-detected suggestions for owner/perms
 
-```
-"Create alias 'prod' for production server"
-"List all server aliases"
-"Remove alias 'old-server'"
-```
+If not provided, defaults are inferred from remote path:
 
-## Common Deployment Workflows
+- `/etc/*` → `root:root`, `644`
+- `/var/www/*` → `www-data:www-data`, `644`
+- paths containing `/nginx/` → `root:root`, `644`
+- paths containing `/apache/` or `/httpd/` → `www-data:www-data`, `644`
+- paths containing `/frappe-bench/` → permissions `644` only
 
-### Application Module Deployment
+Sudo use is triggered when remote path starts with `/etc/`, `/var/`, `/usr/`, or when `owner`/`permissions` is set.
 
-A typical end-to-end deployment of a couple of module files into a running app:
+### `ssh_execute_sudo`
 
-```
-# Step 1: Create aliases for easier access
-"Create alias 'myapp' for production_server"
+Runs a command as sudo with non-interactive mode:
 
-# Step 2: Deploy files using the new tool
-"Deploy handler.py and handler.js to myapp:/opt/myapp/apps/myapp/module/"
+- Command is executed as `sudo -n <command-with-leading-sudo-removed>`
+- Uses provided `cwd` or server `default_dir`/`defaultDir` when present
+- `password` argument is **rejected**
+- `server` config `sudoPassword`/`sudo_password` is also **rejected**
 
-# Step 3: Restart the service
-"Run './bin/restart' on myapp"
-```
+### `ssh_alias`
 
-The deployment tool automatically:
-- Uploads to a temp location first
-- Moves files to the correct location
-- Handles permissions if needed
-- Creates backups of existing files
+Manage server aliases:
 
-### Web Application Deployment
+- `action: add` requires `alias` + `server`
+- `action: remove` requires `alias`
+- `action: list` returns alias mappings
 
-```
-# Deploy with automatic nginx restart
-"Deploy index.html to production:/var/www/html with nginx restart"
+Alias file location:
 
-# This single command:
-# 1. Backs up existing index.html
-# 2. Uploads new file to temp
-# 3. Moves to final location with correct permissions
-# 4. Restarts nginx
-```
+- `<repo-root>/.server-aliases.json` (resolved from `src/server-aliases.js`)
 
-### Configuration File Updates
+Alias resolution supports:
 
-```
-# Deploy sensitive config with proper permissions
-"Deploy nginx.conf to prod:/etc/nginx/ with owner root:root and permissions 644"
-```
+- direct alias match
+- exact server-name match (case-normalized)
+- single partial server-name match
+- hostname/domain-based match
 
-## Security Best Practices
+## Hooks during deploy
 
-### 1. Sudo Password Handling
+`ssh_deploy` invokes:
 
-⚠️ **Never** pass sudo passwords directly in commands. Instead:
+- `pre-deploy`
+- `post-deploy`
 
-**Option A: Configure in .env (Recommended)**
-```env
-SSH_SERVER_PRODUCTION_SUDO_PASSWORD=your_password
-```
+Hook config is read from:
 
-**Option B: Use key-based sudo (Most Secure)**
-Configure passwordless sudo for specific commands on your server.
+- profile hooks in `profiles/*.json`
+- optional override file `<repo-root>/.hooks-config.json`
 
-### 2. Sensitive File Handling
+Current behavior note: deploy calls `executeHook(...)` but does not enforce returned `success:false` as a hard stop unless an exception is thrown.
 
-The deployment tool automatically:
-- Never logs passwords in output
-- Masks sensitive information in logs
-- Uses secure temp file locations
+## Operational Notes
 
-### 3. Backup Strategy
-
-Always enabled by default:
-- Creates timestamped backups before overwriting
-- Format: `original_file.bak.YYYYMMDD_HHMMSS`
+- Use absolute remote paths for predictable behavior.
+- `restart` should be a simple systemd unit name (example: `nginx`, `php8.2-fpm`).
+- Ensure target user has NOPASSWD sudo rights for any `sudo -n` steps.
+- Server names come from loaded SSH config (`.env` and/or `~/.codex/ssh-config.toml` via config loader).
 
 ## Troubleshooting
 
-### Permission Denied Errors
+### `sudo: a password is required`
 
-**Problem**: Can't write to system directories
+Cause: target user lacks non-interactive sudo permission.
 
-**Solution**: Use `ssh_deploy` with proper options:
-```json
-{
-  "options": {
-    "owner": "www-data:www-data",
-    "sudoPassword": "configured_in_env"
-  }
-}
-```
+Fix: configure NOPASSWD sudo for required commands.
 
-### Server Not Found
+### Restart fails with invalid service input
 
-**Problem**: "Server 'host.example.com' not found"
+Cause: `restart` value includes spaces or shell syntax.
 
-**Solution**: Use configured name or create an alias:
-```
-"Create alias 'host.example.com' for myapp"
-```
+Fix: pass only service name (for example, `nginx`), not `systemctl restart nginx`.
 
-### Files Not Updating
+### Server not found
 
-**Problem**: Files uploaded but changes not visible
+Cause: unresolved `server` name/alias.
 
-**Solution**: Ensure service restart:
-```json
-{
-  "options": {
-    "restart": "systemctl restart myapp"
-  }
-}
-```
+Fix:
 
-## Configuration Examples
+1. verify configured server name
+2. check aliases via `ssh_alias` (`action: list`)
+3. add alias with `ssh_alias` (`action: add`)
 
-### .env Configuration
+### Backup not created but deploy succeeds
 
-```env
-# Server with sudo password for deployments
-SSH_SERVER_PRODUCTION_HOST=prod.example.com
-SSH_SERVER_PRODUCTION_USER=deploy
-SSH_SERVER_PRODUCTION_PASSWORD=deploy_password
-SSH_SERVER_PRODUCTION_SUDO_PASSWORD=sudo_password
-SSH_SERVER_PRODUCTION_DEFAULT_DIR=/var/www/app
+Cause: backup step is best-effort and non-fatal.
 
-# Development server with key auth
-SSH_SERVER_DEV_HOST=dev.example.com
-SSH_SERVER_DEV_USER=developer
-SSH_SERVER_DEV_KEYPATH=~/.ssh/dev_key
-SSH_SERVER_DEV_DEFAULT_DIR=/home/developer/app
-```
-
-### Alias Configuration
-
-Create a `.server-aliases.json`:
-
-```json
-{
-  "prod": "production",
-  "dev": "development",
-  "stage": "staging",
-  "myapp": "production_server"
-}
-```
-
-## Performance Tips
-
-1. **Batch Deployments**: Deploy multiple files in one command
-2. **Use Aliases**: Shorter names = faster typing
-3. **Default Directories**: Set default dirs to avoid repetition
-4. **Connection Reuse**: Connections are kept alive during session
-
-## Example: Complete Application Update
-
-End-to-end deployment of a couple of customization files into a running app:
-
-```bash
-# 1. Setup (one time)
-"Create alias 'myapp' for production_server"
-
-# 2. Deploy both files at once
-"Deploy these files to myapp:
-- handler.py to /opt/myapp/apps/myapp/module/handler/
-- handler.js to same location"
-
-# 3. Restart service
-"Run 'cd /opt/myapp && ./bin/restart' on myapp"
-```
-
-The single-command flow replaces the manual process of upload-to-tmp,
-chown, chmod, mv, restart — all handled by `ssh_deploy` in one shot:
-
-- ✅ Single command deployment
-- ✅ Automatic permission/ownership handling
-- ✅ Automatic backup before overwriting
-- ✅ No sudo password typed in the terminal
-
-## Support
-
-For issues or questions:
-- Check server logs: `"Execute 'tail -f /var/log/syslog' on server"`
-- Test connection: `python tools/test-connection.py servername`
-- View aliases: `"List server aliases"`
+Fix: verify target read permissions or perform explicit pre-deploy backup when required.

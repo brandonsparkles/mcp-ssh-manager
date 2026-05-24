@@ -7,13 +7,14 @@
 
 /**
  * Tool groups with their associated tools
- * Total: 37 tools across 6 groups
+ * Total: 39 tools across 6 groups
  */
 export const TOOL_GROUPS = {
-  // Core group (5 tools) - Essential SSH operations
+  // Core group (6 tools) - Essential SSH operations
   core: [
     'ssh_list_servers',
     'ssh_execute',
+    'ssh_python_as_user',
     'ssh_upload',
     'ssh_download',
     'ssh_sync'
@@ -53,9 +54,10 @@ export const TOOL_GROUPS = {
     'ssh_db_query'
   ],
 
-  // Advanced group (14 tools) - Advanced features
+  // Advanced group (15 tools) - Advanced features
   advanced: [
     'ssh_deploy',
+    'ssh_execute_advanced',
     'ssh_execute_sudo',
     'ssh_alias',
     'ssh_command_alias',
@@ -76,29 +78,29 @@ export const TOOL_GROUPS = {
  * Human-readable descriptions for each tool group
  */
 export const TOOL_GROUP_DESCRIPTIONS = {
-  core: 'Essential SSH operations (list servers, execute commands, upload/download files, sync)',
+  core: 'Essential SSH operations (list servers, execute commands, run Python as site user, upload/download files, sync)',
   sessions: 'Persistent SSH sessions with state management',
   monitoring: 'System health checks, service monitoring, process management, and alerts',
   backup: 'Automated backup and restore for databases and files',
   database: 'Database operations (MySQL, PostgreSQL, MongoDB)',
-  advanced: 'Advanced features (deployment, sudo, tunnels, groups, aliases, hooks, profiles)'
+  advanced: 'Advanced features (advanced execute overrides, deployment, sudo, tunnels, groups, aliases, hooks, profiles)'
 };
 
 /**
  * Tool count per group
  */
 export const TOOL_GROUP_COUNTS = {
-  core: 5,
+  core: 6,
   sessions: 4,
   monitoring: 6,
   backup: 4,
   database: 4,
-  advanced: 14
+  advanced: 15
 };
 
 /**
  * Get all tool names across all groups
- * @returns {string[]} Array of all 37 tool names
+ * @returns {string[]} Array of all tool names
  */
 export function getAllTools() {
   return Object.values(TOOL_GROUPS).flat();

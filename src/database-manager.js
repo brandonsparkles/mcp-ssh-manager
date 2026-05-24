@@ -17,6 +17,35 @@ export const DB_PORTS = {
   mongodb: 27017
 };
 
+function shellQuote(value) {
+  const quote = String.fromCharCode(39);
+  return quote + String(value).replace(/'/g, quote + '\\' + quote + quote) + quote;
+}
+
+function shellJoin(values) {
+  return values.map(shellQuote).join(' ');
+}
+
+function posixDirname(value) {
+  const text = String(value);
+  const index = text.lastIndexOf('/');
+  if (index < 0) return '.';
+  if (index === 0) return '/';
+  return text.slice(0, index);
+}
+
+function posixBasename(value) {
+  const text = String(value);
+  const index = text.lastIndexOf('/');
+  return index < 0 ? text : text.slice(index + 1);
+}
+
+function assertSafeMongoCollection(collection) {
+  if (!/^[A-Za-z0-9_.-]+$/.test(collection || '')) {
+    throw new Error('MongoDB collection name contains unsafe characters');
+  }
+}
+
 /**
  * Build MySQL dump command
  */
@@ -34,22 +63,22 @@ export function buildMySQLDumpCommand(options) {
 
   let command = 'mysqldump';
 
-  if (user) command += ` -u${user}`;
-  if (password) command += ` -p'${password}'`;
-  if (host) command += ` -h ${host}`;
-  if (port) command += ` -P ${port}`;
+  if (user) command += ` -u ${shellQuote(user)}`;
+  if (password) command += ` --password=${shellQuote(password)}`;
+  if (host) command += ` -h ${shellQuote(host)}`;
+  if (port) command += ` -P ${shellQuote(port)}`;
 
   command += ' --single-transaction --routines --triggers';
-  command += ` ${database}`;
+  command += ` ${shellQuote(database)}`;
 
   if (tables && Array.isArray(tables)) {
-    command += ` ${tables.join(' ')}`;
+    command += ` ${shellJoin(tables)}`;
   }
 
   if (compress) {
-    command += ` | gzip > "${outputFile}"`;
+    command += ` | gzip > ${shellQuote(outputFile)}`;
   } else {
-    command += ` > "${outputFile}"`;
+    command += ` > ${shellQuote(outputFile)}`;
   }
 
   return command;
@@ -72,27 +101,27 @@ export function buildPostgreSQLDumpCommand(options) {
 
   let command = '';
   if (password) {
-    command = `PGPASSWORD='${password}' `;
+    command = `PGPASSWORD=${shellQuote(password)} `;
   }
 
   command += 'pg_dump';
-  if (user) command += ` -U ${user}`;
-  if (host) command += ` -h ${host}`;
-  if (port) command += ` -p ${port}`;
+  if (user) command += ` -U ${shellQuote(user)}`;
+  if (host) command += ` -h ${shellQuote(host)}`;
+  if (port) command += ` -p ${shellQuote(port)}`;
   command += ' --format=custom --clean --if-exists';
 
   if (tables && Array.isArray(tables)) {
     for (const table of tables) {
-      command += ` -t ${table}`;
+      command += ` -t ${shellQuote(table)}`;
     }
   }
 
-  command += ` ${database}`;
+  command += ` ${shellQuote(database)}`;
 
   if (compress) {
-    command += ` | gzip > "${outputFile}"`;
+    command += ` | gzip > ${shellQuote(outputFile)}`;
   } else {
-    command += ` > "${outputFile}"`;
+    command += ` > ${shellQuote(outputFile)}`;
   }
 
   return command;
@@ -114,23 +143,23 @@ export function buildMongoDBDumpCommand(options) {
   } = options;
 
   let command = 'mongodump';
-  if (host) command += ` --host ${host}`;
-  if (port) command += ` --port ${port}`;
-  if (user) command += ` --username ${user}`;
-  if (password) command += ` --password '${password}'`;
-  if (database) command += ` --db ${database}`;
+  if (host) command += ` --host ${shellQuote(host)}`;
+  if (port) command += ` --port ${shellQuote(port)}`;
+  if (user) command += ` --username ${shellQuote(user)}`;
+  if (password) command += ` --password ${shellQuote(password)}`;
+  if (database) command += ` --db ${shellQuote(database)}`;
 
   if (collections && Array.isArray(collections)) {
     for (const collection of collections) {
-      command += ` --collection ${collection}`;
+      command += ` --collection ${shellQuote(collection)}`;
     }
   }
 
-  command += ` --out "${outputDir}"`;
+  command += ` --out ${shellQuote(outputDir)}`;
 
   if (compress) {
-    command += ` && tar -czf "${outputDir}.tar.gz" -C "$(dirname ${outputDir})" "$(basename ${outputDir})"`;
-    command += ` && rm -rf "${outputDir}"`;
+    command += ` && tar -czf ${shellQuote(`${outputDir}.tar.gz`)} -C ${shellQuote(posixDirname(outputDir))} ${shellQuote(posixBasename(outputDir))}`;
+    command += ` && rm -rf ${shellQuote(outputDir)}`;
   }
 
   return command;
@@ -152,17 +181,17 @@ export function buildMySQLImportCommand(options) {
   let command = '';
 
   if (inputFile.endsWith('.gz')) {
-    command = `gunzip -c "${inputFile}" | `;
+    command = `gunzip -c ${shellQuote(inputFile)} | `;
   } else {
-    command = `cat "${inputFile}" | `;
+    command = `cat ${shellQuote(inputFile)} | `;
   }
 
   command += 'mysql';
-  if (user) command += ` -u${user}`;
-  if (password) command += ` -p'${password}'`;
-  if (host) command += ` -h ${host}`;
-  if (port) command += ` -P ${port}`;
-  command += ` ${database}`;
+  if (user) command += ` -u ${shellQuote(user)}`;
+  if (password) command += ` --password=${shellQuote(password)}`;
+  if (host) command += ` -h ${shellQuote(host)}`;
+  if (port) command += ` -P ${shellQuote(port)}`;
+  command += ` ${shellQuote(database)}`;
 
   return command;
 }
@@ -182,20 +211,20 @@ export function buildPostgreSQLImportCommand(options) {
 
   let command = '';
   if (password) {
-    command = `PGPASSWORD='${password}' `;
+    command = `PGPASSWORD=${shellQuote(password)} `;
   }
 
   command += 'pg_restore';
-  if (user) command += ` -U ${user}`;
-  if (host) command += ` -h ${host}`;
-  if (port) command += ` -p ${port}`;
+  if (user) command += ` -U ${shellQuote(user)}`;
+  if (host) command += ` -h ${shellQuote(host)}`;
+  if (port) command += ` -p ${shellQuote(port)}`;
   command += ' --clean --if-exists';
-  command += ` -d ${database}`;
+  command += ` -d ${shellQuote(database)}`;
 
   if (inputFile.endsWith('.gz')) {
-    command = `gunzip -c "${inputFile}" | ${command}`;
+    command = `gunzip -c ${shellQuote(inputFile)} | ${command}`;
   } else {
-    command += ` "${inputFile}"`;
+    command += ` ${shellQuote(inputFile)}`;
   }
 
   return command;
@@ -206,7 +235,6 @@ export function buildPostgreSQLImportCommand(options) {
  */
 export function buildMongoDBRestoreCommand(options) {
   const {
-    database,
     user,
     password,
     host = 'localhost',
@@ -219,23 +247,23 @@ export function buildMongoDBRestoreCommand(options) {
 
   if (inputPath.endsWith('.tar.gz')) {
     const extractDir = inputPath.replace('.tar.gz', '');
-    command = `tar -xzf "${inputPath}" -C "$(dirname ${inputPath})" && `;
+    command = `tar -xzf ${shellQuote(inputPath)} -C ${shellQuote(posixDirname(inputPath))} && `;
     command += 'mongorestore';
     if (drop) command += ' --drop';
-    if (host) command += ` --host ${host}`;
-    if (port) command += ` --port ${port}`;
-    if (user) command += ` --username ${user}`;
-    if (password) command += ` --password '${password}'`;
-    command += ` "${extractDir}"`;
-    command += ` && rm -rf "${extractDir}"`;
+    if (host) command += ` --host ${shellQuote(host)}`;
+    if (port) command += ` --port ${shellQuote(port)}`;
+    if (user) command += ` --username ${shellQuote(user)}`;
+    if (password) command += ` --password ${shellQuote(password)}`;
+    command += ` ${shellQuote(extractDir)}`;
+    command += ` && rm -rf ${shellQuote(extractDir)}`;
   } else {
     command = 'mongorestore';
     if (drop) command += ' --drop';
-    if (host) command += ` --host ${host}`;
-    if (port) command += ` --port ${port}`;
-    if (user) command += ` --username ${user}`;
-    if (password) command += ` --password '${password}'`;
-    command += ` "${inputPath}"`;
+    if (host) command += ` --host ${shellQuote(host)}`;
+    if (port) command += ` --port ${shellQuote(port)}`;
+    if (user) command += ` --username ${shellQuote(user)}`;
+    if (password) command += ` --password ${shellQuote(password)}`;
+    command += ` ${shellQuote(inputPath)}`;
   }
 
   return command;
@@ -248,10 +276,10 @@ export function buildMySQLListDatabasesCommand(options) {
   const { user, password, host = 'localhost', port = 3306 } = options;
 
   let command = 'mysql';
-  if (user) command += ` -u${user}`;
-  if (password) command += ` -p'${password}'`;
-  if (host) command += ` -h ${host}`;
-  if (port) command += ` -P ${port}`;
+  if (user) command += ` -u ${shellQuote(user)}`;
+  if (password) command += ` --password=${shellQuote(password)}`;
+  if (host) command += ` -h ${shellQuote(host)}`;
+  if (port) command += ` -P ${shellQuote(port)}`;
   command += ' -e "SHOW DATABASES;" | tail -n +2';
 
   return command;
@@ -264,11 +292,11 @@ export function buildMySQLListTablesCommand(options) {
   const { database, user, password, host = 'localhost', port = 3306 } = options;
 
   let command = 'mysql';
-  if (user) command += ` -u${user}`;
-  if (password) command += ` -p'${password}'`;
-  if (host) command += ` -h ${host}`;
-  if (port) command += ` -P ${port}`;
-  command += ` -e "USE ${database}; SHOW TABLES;" | tail -n +2`;
+  if (user) command += ` -u ${shellQuote(user)}`;
+  if (password) command += ` --password=${shellQuote(password)}`;
+  if (host) command += ` -h ${shellQuote(host)}`;
+  if (port) command += ` -P ${shellQuote(port)}`;
+  command += ` -e ${shellQuote(`USE ${database}; SHOW TABLES;`)} | tail -n +2`;
 
   return command;
 }
@@ -281,13 +309,13 @@ export function buildPostgreSQLListDatabasesCommand(options) {
 
   let command = '';
   if (password) {
-    command = `PGPASSWORD='${password}' `;
+    command = `PGPASSWORD=${shellQuote(password)} `;
   }
 
   command += 'psql';
-  if (user) command += ` -U ${user}`;
-  if (host) command += ` -h ${host}`;
-  if (port) command += ` -p ${port}`;
+  if (user) command += ` -U ${shellQuote(user)}`;
+  if (host) command += ` -h ${shellQuote(host)}`;
+  if (port) command += ` -p ${shellQuote(port)}`;
   command += ' -t -c "SELECT datname FROM pg_database WHERE datistemplate = false;" | sed \'/^$/d\' | sed \'s/^[ \\t]*//\'';
 
   return command;
@@ -301,14 +329,14 @@ export function buildPostgreSQLListTablesCommand(options) {
 
   let command = '';
   if (password) {
-    command = `PGPASSWORD='${password}' `;
+    command = `PGPASSWORD=${shellQuote(password)} `;
   }
 
   command += 'psql';
-  if (user) command += ` -U ${user}`;
-  if (host) command += ` -h ${host}`;
-  if (port) command += ` -p ${port}`;
-  command += ` -d ${database}`;
+  if (user) command += ` -U ${shellQuote(user)}`;
+  if (host) command += ` -h ${shellQuote(host)}`;
+  if (port) command += ` -p ${shellQuote(port)}`;
+  command += ` -d ${shellQuote(database)}`;
   command += ' -t -c "SELECT tablename FROM pg_tables WHERE schemaname = \'public\';" | sed \'/^$/d\' | sed \'s/^[ \\t]*//\'';
 
   return command;
@@ -321,10 +349,10 @@ export function buildMongoDBListDatabasesCommand(options) {
   const { user, password, host = 'localhost', port = 27017 } = options;
 
   let command = 'mongo';
-  if (host) command += ` --host ${host}`;
-  if (port) command += ` --port ${port}`;
-  if (user) command += ` --username ${user}`;
-  if (password) command += ` --password '${password}'`;
+  if (host) command += ` --host ${shellQuote(host)}`;
+  if (port) command += ` --port ${shellQuote(port)}`;
+  if (user) command += ` --username ${shellQuote(user)}`;
+  if (password) command += ` --password ${shellQuote(password)}`;
   command += ' --quiet --eval "db.adminCommand(\'listDatabases\').databases.forEach(function(d){print(d.name)})"';
 
   return command;
@@ -337,11 +365,11 @@ export function buildMongoDBListCollectionsCommand(options) {
   const { database, user, password, host = 'localhost', port = 27017 } = options;
 
   let command = 'mongo';
-  if (host) command += ` --host ${host}`;
-  if (port) command += ` --port ${port}`;
-  if (user) command += ` --username ${user}`;
-  if (password) command += ` --password '${password}'`;
-  command += ` ${database}`;
+  if (host) command += ` --host ${shellQuote(host)}`;
+  if (port) command += ` --port ${shellQuote(port)}`;
+  if (user) command += ` --username ${shellQuote(user)}`;
+  if (password) command += ` --password ${shellQuote(password)}`;
+  command += ` ${shellQuote(database)}`;
   command += ' --quiet --eval "db.getCollectionNames().forEach(function(c){print(c)})"';
 
   return command;
@@ -359,17 +387,17 @@ export function buildMySQLQueryCommand(options) {
   }
 
   let command = 'mysql';
-  if (user) command += ` -u${user}`;
-  if (password) command += ` -p'${password}'`;
-  if (host) command += ` -h ${host}`;
-  if (port) command += ` -P ${port}`;
-  command += ` ${database}`;
+  if (user) command += ` -u ${shellQuote(user)}`;
+  if (password) command += ` --password=${shellQuote(password)}`;
+  if (host) command += ` -h ${shellQuote(host)}`;
+  if (port) command += ` -P ${shellQuote(port)}`;
+  command += ` ${shellQuote(database)}`;
 
   if (format === 'json') {
     // Use JSON output if MySQL 5.7.8+
-    command += ` -e "${query}" --batch --skip-column-names | awk 'BEGIN{print "["} {if(NR>1)print ","; printf "{\\"row\\":%d,\\"data\\":\\"%s\\"}", NR, $0} END{print "]"}'`;
+    command += ` -e ${shellQuote(query)} --batch --skip-column-names | awk 'BEGIN{print "["} {if(NR>1)print ","; printf "{\\"row\\":%d,\\"data\\":\\"%s\\"}", NR, $0} END{print "]"}'`;
   } else {
-    command += ` -e "${query}"`;
+    command += ` -e ${shellQuote(query)}`;
   }
 
   return command;
@@ -387,15 +415,15 @@ export function buildPostgreSQLQueryCommand(options) {
 
   let command = '';
   if (password) {
-    command = `PGPASSWORD='${password}' `;
+    command = `PGPASSWORD=${shellQuote(password)} `;
   }
 
   command += 'psql';
-  if (user) command += ` -U ${user}`;
-  if (host) command += ` -h ${host}`;
-  if (port) command += ` -p ${port}`;
-  command += ` -d ${database}`;
-  command += ` -c "${query}"`;
+  if (user) command += ` -U ${shellQuote(user)}`;
+  if (host) command += ` -h ${shellQuote(host)}`;
+  if (port) command += ` -p ${shellQuote(port)}`;
+  command += ` -d ${shellQuote(database)}`;
+  command += ` -c ${shellQuote(query)}`;
 
   return command;
 }
@@ -405,14 +433,15 @@ export function buildPostgreSQLQueryCommand(options) {
  */
 export function buildMongoDBQueryCommand(options) {
   const { database, collection, query, user, password, host = 'localhost', port = 27017 } = options;
+  assertSafeMongoCollection(collection);
 
   let command = 'mongo';
-  if (host) command += ` --host ${host}`;
-  if (port) command += ` --port ${port}`;
-  if (user) command += ` --username ${user}`;
-  if (password) command += ` --password '${password}'`;
-  command += ` ${database}`;
-  command += ` --quiet --eval "db.${collection}.find(${query || '{}'}).forEach(printjson)"`;
+  if (host) command += ` --host ${shellQuote(host)}`;
+  if (port) command += ` --port ${shellQuote(port)}`;
+  if (user) command += ` --username ${shellQuote(user)}`;
+  if (password) command += ` --password ${shellQuote(password)}`;
+  command += ` ${shellQuote(database)}`;
+  command += ` --quiet --eval ${shellQuote(`db.getCollection(${JSON.stringify(collection)}).find(${query || '{}'}).forEach(printjson)`)}`;
 
   return command;
 }
@@ -479,35 +508,35 @@ export function buildEstimateSizeCommand(type, database, options = {}) {
   switch (type) {
   case DB_TYPES.MYSQL: {
     let command = 'mysql';
-    if (user) command += ` -u${user}`;
-    if (password) command += ` -p'${password}'`;
-    if (host) command += ` -h ${host}`;
-    if (port) command += ` -P ${port}`;
-    command += ` -e "SELECT SUM(data_length + index_length) FROM information_schema.TABLES WHERE table_schema='${database}';" | tail -n 1`;
+    if (user) command += ` -u ${shellQuote(user)}`;
+    if (password) command += ` --password=${shellQuote(password)}`;
+    if (host) command += ` -h ${shellQuote(host)}`;
+    if (port) command += ` -P ${shellQuote(port)}`;
+    command += ` -e ${shellQuote(`SELECT SUM(data_length + index_length) FROM information_schema.TABLES WHERE table_schema='${database}';`)} | tail -n 1`;
     return command;
   }
 
   case DB_TYPES.POSTGRESQL: {
     let command = '';
     if (password) {
-      command = `PGPASSWORD='${password}' `;
+      command = `PGPASSWORD=${shellQuote(password)} `;
     }
     command += 'psql';
-    if (user) command += ` -U ${user}`;
-    if (host) command += ` -h ${host}`;
-    if (port) command += ` -p ${port}`;
-    command += ` -d ${database}`;
-    command += ` -t -c "SELECT pg_database_size('${database}');" | sed 's/^[ \\t]*//'`;
+    if (user) command += ` -U ${shellQuote(user)}`;
+    if (host) command += ` -h ${shellQuote(host)}`;
+    if (port) command += ` -p ${shellQuote(port)}`;
+    command += ` -d ${shellQuote(database)}`;
+    command += ` -t -c ${shellQuote(`SELECT pg_database_size('${database}');`)} | sed 's/^[ \\t]*//'`;
     return command;
   }
 
   case DB_TYPES.MONGODB: {
     let command = 'mongo';
-    if (host) command += ` --host ${host}`;
-    if (port) command += ` --port ${port}`;
-    if (user) command += ` --username ${user}`;
-    if (password) command += ` --password '${password}'`;
-    command += ` ${database}`;
+    if (host) command += ` --host ${shellQuote(host)}`;
+    if (port) command += ` --port ${shellQuote(port)}`;
+    if (user) command += ` --username ${shellQuote(user)}`;
+    if (password) command += ` --password ${shellQuote(password)}`;
+    command += ` ${shellQuote(database)}`;
     command += ' --quiet --eval "db.stats().dataSize"';
     return command;
   }

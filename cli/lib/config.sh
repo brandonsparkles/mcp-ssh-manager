@@ -316,7 +316,7 @@ test_ssh_connection() {
 
     print_info "Testing connection to $server ($user@$host:$port)..."
 
-    local ssh_opts="-o ConnectTimeout=10 -o StrictHostKeyChecking=no"
+    local ssh_opts="-o ConnectTimeout=10 -o StrictHostKeyChecking=yes"
     local ssh_output=$(mktemp)
     local ssh_status
 

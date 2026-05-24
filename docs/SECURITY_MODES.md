@@ -23,8 +23,8 @@ attacks, layered between the MCP client and the SSH session.
 | Mode | What it does |
 |---|---|
 | `unrestricted` (default) | No filter. Identical to pre-v3.5.0 behavior. Zero overhead — `evaluatePolicy()` early-returns. |
-| `readonly` | Blocks mutating tools at the tool level (`ssh_upload`, `ssh_deploy`, `ssh_sync`, `ssh_execute_sudo`, `ssh_backup_create/restore/schedule`, `ssh_db_import/dump`, `ssh_key_manage` write actions, `ssh_alert_setup` set, `ssh_process_manager kill`). For `ssh_execute` / `ssh_execute_sudo` / `ssh_execute_group` / `ssh_session_send`, applies a built-in denylist (rm, mv, dd, mkfs, chmod, chown, sudo, systemctl restart/stop, docker rm/stop, pipe-to-sh, redirect outside `/tmp`, etc.). |
-| `restricted` | All readonly blocks plus: every command must match at least one `ALLOW_PATTERNS` regex AND no `DENY_PATTERNS` regex. **DENY wins over ALLOW**. With no `ALLOW_PATTERNS`, every command is refused (fail-closed). |
+| `readonly` | Blocks mutating tools at the tool level (`ssh_upload`, `ssh_deploy`, `ssh_sync`, `ssh_python_as_user`, `ssh_execute_sudo`, `ssh_backup_create/restore/schedule`, `ssh_db_import/dump`, `ssh_key_manage`, `ssh_alert_setup`, `ssh_process_manager`). For command-bearing tools (`ssh_execute`, `ssh_execute_advanced`, `ssh_execute_sudo`, `ssh_execute_group`, `ssh_session_send`), applies a built-in denylist (rm, mv, dd, mkfs, chmod, chown, sudo, systemctl restart/stop, docker rm/stop, pipe-to-sh, redirect outside `/tmp`, etc.). |
+| `restricted` | Inherits readonly tool-level blocks for non-command tools, plus command regex enforcement: every command must match at least one `ALLOW_PATTERNS` regex AND no `DENY_PATTERNS` regex. **DENY wins over ALLOW**. With no `ALLOW_PATTERNS`, every command is refused (fail-closed). |
 
 ## Configuration
 
@@ -46,6 +46,7 @@ SSH_SERVER_PROD_DENY_PATTERNS=" -f $; --force"
 
 Patterns are `;`-separated POSIX-ish JavaScript regex (compiled with `new RegExp`).
 Invalid regex are logged as warnings and skipped — they do not abort startup.
+Unknown mode values in config are normalized to `unrestricted` with a warning at load time.
 
 ### TOML
 
@@ -66,8 +67,10 @@ parity with the `.env` form.
 
 ## Audit log
 
-When `AUDIT_LOG` (`.env`) or `audit_log` (TOML) is set to a file path, every
-**gated** tool invocation appends a JSONL record:
+When `AUDIT_LOG` (`.env`) or `audit_log` (TOML) is set to a file path, policy
+denials are always logged. Successful execution logging is currently emitted by
+`ssh_execute`/`ssh_execute_advanced` (recorded as `tool: "ssh_execute"`),
+`ssh_execute_group`, `ssh_session_send`, and `ssh_python_as_user`.
 
 ```json
 {"ts":"2026-05-18T15:30:00.123Z","server":"prod","tool":"ssh_execute","args":{"command":"ls /tmp"},"allowed":true,"exitCode":0,"success":true}
@@ -79,10 +82,11 @@ are redacted to `***` before being written, even if a tool somehow passed them
 through args.
 
 Log rotation is not handled by `mcp-ssh-manager` — use `logrotate`, `vector`,
-or your log shipper of choice. v3.5.0 audits cover the gated tool set:
-`ssh_execute`, `ssh_upload`, `ssh_execute_sudo`, plus denials on every other
-mutating tool. Pure read tools (`ssh_health_check`, `ssh_db_query`, `ssh_tail`…)
-are not audited in v3.5.0 — open an issue if you need full coverage.
+or your log shipper of choice. Tool args are recursively sanitized and these
+fields are redacted case-insensitively: `password`, `passphrase`,
+`sudoPassword`/`sudo_password`, `token`, `secret`, `apikey`/`api_key`.
+If writing fails, the server logs one warning per audit path, then suppresses
+repeated warnings for that same path.
 
 ## Recipes
 
@@ -139,14 +143,15 @@ SSH_SERVER_CLIENT_PROD_AUDIT_LOG=~/.ssh-manager/audit/client-prod.jsonl
 
 ## What gets gated, what doesn't
 
-**Fully gated** (policy check at tool entry):
-`ssh_execute`, `ssh_execute_sudo`, `ssh_execute_group`, `ssh_session_send`,
-`ssh_upload`, `ssh_sync`, `ssh_deploy`, `ssh_backup_create`,
-`ssh_backup_restore`, `ssh_backup_schedule`, `ssh_db_import`, `ssh_db_dump`.
+**Fully gated** (policy check at tool entry, when a `server` target is present):
+`ssh_execute`, `ssh_execute_advanced`, `ssh_execute_sudo`, `ssh_execute_group`,
+`ssh_session_send`, `ssh_upload`, `ssh_sync`, `ssh_deploy`,
+`ssh_backup_create`, `ssh_backup_restore`, `ssh_backup_schedule`,
+`ssh_db_import`, `ssh_db_dump`, `ssh_python_as_user`, `ssh_key_manage`,
+`ssh_alert_setup`, `ssh_process_manager`.
 
-**Action-gated** (only the mutating action is checked):
-`ssh_key_manage` (only `accept` / `remove`), `ssh_alert_setup` (only `set`),
-`ssh_process_manager` (only `kill`).
+There is no per-action policy split in current code: for blocked tools in
+readonly/restricted mode, the whole tool is denied.
 
 **Not gated** (pure reads or local-only state — no remote effect to block):
 `ssh_list_servers`, `ssh_download`, `ssh_tail`, `ssh_monitor`, `ssh_history`,
@@ -155,6 +160,10 @@ SSH_SERVER_CLIENT_PROD_AUDIT_LOG=~/.ssh-manager/audit/client-prod.jsonl
 `ssh_session_list`, `ssh_session_close`, `ssh_connection_status`,
 `ssh_tunnel_*`, `ssh_group_manage`, `ssh_command_alias`, `ssh_alias`,
 `ssh_hooks`, `ssh_profile`.
+
+`ssh_key_manage` has one edge case: `action=list` can be called without a
+`server` argument; without a target server there is no per-server policy to
+evaluate.
 
 ## Limitations
 

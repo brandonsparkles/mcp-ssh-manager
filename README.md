@@ -2,6 +2,7 @@
 
 A Model Context Protocol (MCP) server that enables **Claude Code** and **OpenAI Codex** to manage multiple SSH connections. Execute commands, transfer files, manage databases, create backups, monitor health, and automate DevOps tasks across your servers — directly from your AI assistant.
 
+<!-- markdownlint-disable-next-line MD033 -->
 <div align="center">
 
 [![npm version](https://img.shields.io/npm/v/mcp-ssh-manager.svg?style=for-the-badge&logo=npm)](https://www.npmjs.com/package/mcp-ssh-manager)
@@ -51,7 +52,7 @@ A second authorization layer that filters tool invocations **inside the MCP serv
 
 ### v3.4.0 - Windows OpenSSH support + shell-agnostic session sync (May 7, 2026)
 
-- **🪟 Windows OpenSSH encoding & syntax fixes** — UTF-16LE base64 PowerShell payloads (Ansible-style) + `Set-Location` replacing `cd && ` ([#31](https://github.com/bvisible/mcp-ssh-manager/pull/31), thanks [@WenKingSu](https://github.com/WenKingSu))
+- **🪟 Windows OpenSSH encoding & syntax fixes** — UTF-16LE base64 PowerShell payloads (Ansible-style) + `Set-Location` replacing `cd &&` ([#31](https://github.com/bvisible/mcp-ssh-manager/pull/31), thanks [@WenKingSu](https://github.com/WenKingSu))
 - **🎯 Marker-based SSH session sync** — UUID v4 protocol boundaries with `ECHO: 0` PTY, real `$?` exit codes, no more "Timeout waiting for shell prompt" on custom/slow/AIX shells ([#30](https://github.com/bvisible/mcp-ssh-manager/pull/30), thanks [@MakksSh](https://github.com/MakksSh))
 
 ### v3.3.0 - ProxyCommand & Critical Fixes (May 2, 2026)
@@ -100,7 +101,7 @@ Thanks to [@snjax](https://github.com/snjax) for the original contribution ([#12
 ### v3.1.0 - Tool Activation System (November 15, 2025)
 
 ### 🎯 Context Usage Optimization
-- **92% context reduction**: Enable only the tools you need (minimal mode: 5 tools vs all 37)
+- **92% context reduction**: Enable only the tools you need (minimal mode: 6 tools vs all 39)
 - **Tool management CLI**: `ssh-manager tools list/configure/enable/disable`
 - **6 tool groups**: Core, Sessions, Monitoring, Backup, Database, Advanced
 - **Auto-approval export**: Generate Claude Code auto-approval configs
@@ -127,7 +128,7 @@ This release adds **12 new MCP tools** transforming SSH Manager into a comprehen
 - **Schema exploration** listing databases, tables, and collections
 - **Secure queries** with SQL injection prevention (SELECT-only)
 
-**📊 Total: 37 MCP Tools** | **🔧 ~4,100 Lines of Code Added** | **✅ Production Ready**
+**📊 Total: 39 MCP Tools** | **🔧 ~4,100 Lines of Code Added** | **✅ Production Ready**
 
 [Read Full Changelog →](CHANGELOG.md#300---2025-10-01)
 
@@ -136,11 +137,11 @@ This release adds **12 new MCP tools** transforming SSH Manager into a comprehen
 ## 📑 Table of Contents
 
 - [Features](#-features)
-- [Tool Management](#-tool-management--context-optimization)
+- [Tool Management](#tool-management--context-optimization)
 - [Prerequisites](#-prerequisites)
 - [Quick Start - Claude Code](#-quick-start---claude-code)
 - [Quick Start - OpenAI Codex](#-quick-start---openai-codex)
-- [Available MCP Tools](#-available-mcp-tools)
+- [Available MCP Tools](#available-mcp-tools)
 - [Configuration](#-configuration)
 - [Usage Examples](#-usage-examples)
 - [Security](#-security-best-practices)
@@ -185,11 +186,11 @@ This release adds **12 new MCP tools** transforming SSH Manager into a comprehen
 
 ---
 
-## ⚙️ Tool Management & Context Optimization
+## Tool Management & Context Optimization
 
 **NEW in v3.1**: Reduce Claude Code context usage by 92% with tool activation management!
 
-MCP SSH Manager includes **37 tools** organized into **6 groups**. By default, all tools are enabled, but you can optimize for your specific workflow:
+MCP SSH Manager includes **39 tools** organized into **6 groups**. By default, all tools are enabled, but you can optimize for your specific workflow:
 
 ### Quick Setup
 
@@ -209,18 +210,18 @@ ssh-manager tools disable backup
 
 | Mode | Tools | Context Usage | Best For |
 |------|-------|---------------|----------|
-| **All** (default) | 37 tools | ~43.5k tokens | Full feature set, most users |
-| **Minimal** | 5 tools | ~3.5k tokens | Basic SSH operations only |
-| **Custom** | 5-37 tools | Varies | Tailored to your workflow |
+| **All** (default) | 39 tools | ~44k tokens | Full feature set, most users |
+| **Minimal** | 6 tools | ~3.5k tokens | Basic SSH operations only |
+| **Custom** | 6-39 tools | Varies | Tailored to your workflow |
 
 ### Tool Groups
 
-- **Core** (5 tools) - Always enabled: list, execute, upload, download, sync
+- **Core** (6 tools) - Always enabled: list, execute, Python-as-site-user, upload, download, sync
 - **Sessions** (4 tools) - Persistent SSH sessions
 - **Monitoring** (6 tools) - Health checks, service status, process management
 - **Backup** (4 tools) - Database and file backups
 - **Database** (4 tools) - MySQL, PostgreSQL, MongoDB operations
-- **Advanced** (14 tools) - Deployment, sudo, tunnels, groups, aliases, etc.
+- **Advanced** (15 tools) - Advanced execute overrides, deployment, sudo, tunnels, groups, aliases, etc.
 
 ### Benefits
 
@@ -303,6 +304,7 @@ Edit `~/.config/claude-code/claude_code_config.json`:
       "autoApprove": [
         "mcp__ssh-manager__ssh_execute",
         "mcp__ssh-manager__ssh_list_servers",
+        "mcp__ssh-manager__ssh_python_as_user",
         "mcp__ssh-manager__ssh_upload",
         "mcp__ssh-manager__ssh_download",
         "mcp__ssh-manager__ssh_sync",
@@ -339,7 +341,7 @@ SSH_SERVER_CLIENT_PROD_AUDIT_LOG=~/.ssh-manager/audit.jsonl   # opt-in JSONL aud
 
 Existing configs are unaffected — no field is mandatory, no behavior changes unless you opt in. See **[docs/SECURITY_MODES.md](docs/SECURITY_MODES.md)** for the full reference, recipes, and limitations.
 
-### 4. Start Using!
+### 4. Start Using
 
 In Claude Code, you can now:
 
@@ -362,22 +364,11 @@ If you set `/var/www/html` as default for production, these commands are equival
 
 ### 1. Install MCP SSH Manager
 
-Same installation as Claude Code (see above), then configure for Codex:
+Same installation as Claude Code (see above), then configure Codex manually.
 
-```bash
-# Set up Codex integration
-ssh-manager codex setup
+### 2. Configure Codex MCP
 
-# Migrate existing servers to TOML format (if you have .env servers)
-ssh-manager codex migrate
-
-# Test the integration
-ssh-manager codex test
-```
-
-### 2. Manual Configuration (Optional)
-
-If you prefer manual setup, add to `~/.codex/config.toml`:
+Add this to `~/.codex/config.toml`:
 
 ```toml
 [mcp_servers.ssh-manager]
@@ -432,7 +423,7 @@ description = "Private server behind bastion"
 
 💡 **See [examples/codex-ssh-config.example.toml](examples/codex-ssh-config.example.toml) for more complete examples!**
 
-### 4. Start Using in Codex!
+### 4. Start Using in Codex
 
 In OpenAI Codex, you can now:
 
@@ -444,23 +435,9 @@ In OpenAI Codex, you can now:
 "Download production:/var/log/app.log to ./logs/"
 ```
 
-### Converting Between Formats
-
-Switch easily between Claude Code (.env) and Codex (TOML):
-
-```bash
-# Convert .env to TOML (for Codex)
-ssh-manager codex convert to-toml
-
-# Convert TOML back to .env (for Claude Code)
-ssh-manager codex convert to-env
-```
-
-Both formats can coexist! The system supports both simultaneously.
-
 ---
 
-## 🛠️ Available MCP Tools
+## Available MCP Tools
 
 ### Core Tools
 
@@ -470,15 +447,30 @@ Lists all configured SSH servers with their details.
 #### `ssh_execute`
 Execute commands on remote servers.
 - Parameters: `server` (name), `command`, `cwd` (optional working directory)
-- **Note**: If no `cwd` is provided, uses the server's default directory if configured
+- Supports routing controls: `run_as` (`auto`/`root`/`site_user`), optional `site_user`
+- Output is preview-capped by default (use `ssh_execute_advanced` for full output)
+
+#### `ssh_execute_advanced`
+Advanced command execution with full debug controls.
+- Adds `verbose`, `timeout`, `max_output_chars`, `delta`, `delta_key`, `delta_only_changes`
+- Includes `allow_root_app_commands` guardrail override for exceptional cases
+
+#### `ssh_python_as_user`
+Run Python 3 on remote hosts as a site user, safely.
+- Parameters: `server`, `script`, optional `site_user`, `cwd`, `timeout`
+- Uses base64 transfer + cleanup to avoid shell-quoting issues
 
 #### `ssh_upload`
 Upload files to remote servers.
-- Parameters: `server`, `local_path`, `remote_path`
+- Parameters: `server`, `localPath`, `remotePath`
 
 #### `ssh_download`
 Download files from remote servers.
-- Parameters: `server`, `remote_path`, `local_path`
+- Parameters: `server`, `remotePath`, `localPath`
+
+#### `ssh_sync`
+Synchronize local/remote paths via rsync.
+- Parameters: `server`, `source`, `destination`, optional `exclude`, `dryRun`, `delete`, `checksum`
 
 ### Backup & Restore Tools (v2.1+) 🔄
 
@@ -569,8 +561,8 @@ Deploy files with automatic permission and backup handling.
 
 #### `ssh_execute_sudo` 🔐
 Execute commands with sudo privileges.
-- Parameters: `server`, `command`, `password` (optional), `cwd` (optional)
-- Securely handles sudo password without exposing in logs
+- Parameters: `server`, `command`, `cwd` (optional), `timeout` (optional)
+- Requires passwordless sudo (`sudo -n`); password-based sudo is intentionally refused
 
 ### Server Management
 
@@ -597,13 +589,21 @@ Manage configuration profiles for different project types.
 - Available profiles: default, frappe, docker, nodejs
 - Example: Switch between different project configurations
 
+### Sessions, Connections, Tunnels & Keys
+
+- `ssh_session_start`, `ssh_session_send`, `ssh_session_list`, `ssh_session_close` — persistent shell sessions
+- `ssh_connection_status` — connection pool `status`, `reconnect`, `disconnect`, `cleanup`
+- `ssh_tunnel_create`, `ssh_tunnel_list`, `ssh_tunnel_close` — local/remote/dynamic tunnels
+- `ssh_key_manage` — host key verify/accept/remove/list/check
+- `ssh_execute_group`, `ssh_group_manage`, `ssh_history` — grouped execution and command history
+
 ## 🔧 Configuration
 
 ### Profiles
 
 SSH Manager uses profiles to configure aliases and hooks for different project types:
 
-1. **Set active profile**: 
+1. **Set active profile**:
    - Environment variable: `export SSH_MANAGER_PROFILE=frappe`
    - Configuration file: Create `.ssh-manager-profile` with profile name
    - Default: Uses `default` profile if not specified
@@ -664,21 +664,21 @@ SSH_SERVER_INTERNAL_DESCRIPTION=Private server behind bastion
 
 ### Server Management Tool
 
-The Python management tool (`tools/server_manager.py`) provides:
+The `ssh-manager` Bash CLI provides:
 
 1. **List servers** - View all configured servers
 2. **Add server** - Interactive server configuration
 3. **Test connection** - Verify server connectivity
 4. **Remove server** - Delete server configuration
-5. **Update Claude Code** - Configure MCP in Claude Code
-6. **Install dependencies** - Setup required packages
+5. **Edit server** - Update server settings interactively
+6. **Tool management** - Configure tool groups (`ssh-manager tools ...`)
 
 ## 📁 Project Structure
 
 ```
 mcp-ssh-manager/
 ├── src/
-│   ├── index.js              # Main MCP server (37 tools)
+│   ├── index.js              # Main MCP server (39 tools)
 │   ├── ssh-manager.js        # SSH connection handling
 │   ├── config-loader.js      # .env & TOML config loading
 │   ├── session-manager.js    # Persistent SSH sessions
@@ -703,7 +703,7 @@ mcp-ssh-manager/
 ### Test Server Connection
 
 ```bash
-python tools/test-connection.py production
+ssh-manager server test production
 ```
 
 ### Verify MCP Installation
@@ -842,19 +842,19 @@ The proxy command must be a valid command that reads from stdin and writes to st
 
 **Solution:** v3.1.1 includes automatic fixes:
 - ✅ Output auto-truncated to prevent context overflow
-- ✅ Timeout increased to 2 minutes (default), max 5 minutes
+- ✅ Command timeout support with a 5-minute default for `ssh_execute`
 - ✅ Standardized error responses
 
-**Performance Tuning** (add to `.env`):
+**Performance Tuning** (per tool call):
 ```bash
-# Reduce output size (default: 10000 characters)
-MCP_SSH_MAX_OUTPUT_LENGTH=5000
+# Increase timeout for slow commands
+ssh_execute(..., timeout: 600000)
 
-# Increase timeout for slow commands (default: 120000ms)
-MCP_SSH_DEFAULT_TIMEOUT=180000
+# Return full stdout/stderr when needed
+ssh_execute_advanced(..., verbose: true)
 
-# Use compact JSON to save tokens (default: false)
-MCP_SSH_COMPACT_JSON=true
+# Poll efficiently by only returning changed output
+ssh_execute_advanced(..., delta: true, delta_key: "deploy-check")
 ```
 
 **For large outputs:**
@@ -978,8 +978,7 @@ This project is licensed under the MIT License - see the [LICENSE](LICENSE) file
 
 - Built for [Claude Code](https://claude.ai/code)
 - Uses the [Model Context Protocol](https://modelcontextprotocol.io)
-- SSH handling via [node-ssh](https://www.npmjs.com/package/node-ssh)
-- Server management with [Paramiko](https://www.paramiko.org)
+- SSH handling via [ssh2](https://www.npmjs.com/package/ssh2)
 
 ---
 
@@ -1009,6 +1008,7 @@ For issues, questions, or suggestions:
 
 ---
 
+<!-- markdownlint-disable-next-line MD033 -->
 <div align="center">
 
 Made with ❤️ for the Claude Code community

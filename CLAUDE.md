@@ -61,9 +61,9 @@ ssh-manager tools reset                       # Reset to defaults (all tools)
 ssh-manager tools export-claude               # Export auto-approval config
 ```
 
-**Tool Groups**: core (5), sessions (4), monitoring (6), backup (4), database (4), advanced (14)
+**Tool Groups**: core (6), sessions (4), monitoring (6), backup (4), database (4), advanced (15)
 
-**Modes**: all (37 tools, ~43.5k tokens), minimal (5 tools, ~3.5k tokens), custom (variable)
+**Modes**: all (39 tools, ~44k tokens), minimal (6 tools, ~3.5k tokens), custom (variable)
 
 See [docs/TOOL_MANAGEMENT.md](docs/TOOL_MANAGEMENT.md) for complete guide.
 
@@ -90,9 +90,11 @@ The server exposes these tools to Claude Code and OpenAI Codex:
 
 ### Core Tools
 - `ssh_list_servers`: List all configured SSH servers
-- `ssh_execute`: Execute commands on remote servers (supports default directories)
+- `ssh_execute`: Execute normal remote commands with a small schema (`server`, `command`, optional `cwd`); site-user routing and output caps are automatic
+- `ssh_python_as_user`: Run Python scripts as the configured site user
 - `ssh_upload`: Upload files to remote servers
 - `ssh_download`: Download files from remote servers
+- `ssh_sync`: Bidirectional file synchronization with rsync
 
 ### Backup & Restore (v2.1+)
 - `ssh_backup_create`: Create database or file backups (MySQL, PostgreSQL, MongoDB, Files)
@@ -114,9 +116,9 @@ The server exposes these tools to Claude Code and OpenAI Codex:
 
 ### Deployment & Management
 - `ssh_deploy`: Deploy files with automatic permission/backup handling
+- `ssh_execute_advanced`: Rare execute overrides for root/site-user routing, full output, or delta polling
 - `ssh_execute_sudo`: Execute commands with sudo privileges
 - `ssh_alias`: Manage server aliases (add/remove/list)
-- `ssh_sync`: Bidirectional file synchronization with rsync
 - `ssh_monitor`: System resource monitoring
 - `ssh_tail`: Real-time log monitoring
 

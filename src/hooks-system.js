@@ -17,6 +17,12 @@ const __dirname = path.dirname(__filename);
 const HOOKS_CONFIG_FILE = path.join(__dirname, '..', '.hooks-config.json');
 const HOOKS_DIR = path.join(__dirname, '..', 'hooks');
 
+function escapeShellPlaceholder(value) {
+  return String(value)
+    .replace(/\r?\n/g, '\\n')
+    .replace(/([\\$`"';&|<>(){}[\]!*?~#\s])/g, '\\$1');
+}
+
 // Get hooks from the active profile
 let profileHooks = {};
 try {
@@ -164,7 +170,7 @@ export async function executeHook(hookName, context = {}) {
       // Replace placeholders in command
       let command = action.command || action.remoteCommand || '';
       for (const [key, value] of Object.entries(context)) {
-        command = command.replace(new RegExp(`{${key}}`, 'g'), value);
+        command = command.replace(new RegExp(`{${key}}`, 'g'), escapeShellPlaceholder(value));
       }
 
       // Execute action based on type

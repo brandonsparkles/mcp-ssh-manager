@@ -13,13 +13,25 @@ const __dirname = path.dirname(__filename);
 const PROFILES_DIR = path.join(__dirname, '..', 'profiles');
 const PROFILE_CONFIG_FILE = path.join(__dirname, '..', '.ssh-manager-profile');
 
+function sanitizeProfileName(profileName) {
+  const name = typeof profileName === 'string' ? profileName.trim() : '';
+  if (!/^[A-Za-z0-9_-]+$/.test(name)) {
+    throw new Error('Invalid profile name. Use letters, numbers, underscore, or dash only.');
+  }
+  return name;
+}
+
 /**
  * Get the active profile name
  */
 export function getActiveProfileName() {
   // 1. Check environment variable
   if (process.env.SSH_MANAGER_PROFILE) {
-    return process.env.SSH_MANAGER_PROFILE;
+    try {
+      return sanitizeProfileName(process.env.SSH_MANAGER_PROFILE);
+    } catch (_error) {
+      console.error('⚠️  Ignoring invalid SSH_MANAGER_PROFILE value; falling back to default profile');
+    }
   }
 
   // 2. Check configuration file
@@ -27,7 +39,11 @@ export function getActiveProfileName() {
     try {
       const profileName = fs.readFileSync(PROFILE_CONFIG_FILE, 'utf8').trim();
       if (profileName) {
-        return profileName;
+        try {
+          return sanitizeProfileName(profileName);
+        } catch (_error) {
+          console.error('⚠️  Ignoring invalid stored profile name; falling back to default profile');
+        }
       }
     } catch (error) {
       console.error(`Error reading profile config: ${error.message}`);
@@ -42,7 +58,14 @@ export function getActiveProfileName() {
  * Load a profile by name
  */
 export function loadProfile(profileName = null) {
-  const name = profileName || getActiveProfileName();
+  const rawName = profileName || getActiveProfileName();
+  let name;
+  try {
+    name = sanitizeProfileName(rawName);
+  } catch (error) {
+    console.error(`⚠️  Invalid profile name '${rawName}', using default profile`);
+    return loadDefaultProfile();
+  }
   const profilePath = path.join(PROFILES_DIR, `${name}.json`);
 
   try {
@@ -125,14 +148,16 @@ export function listProfiles() {
  */
 export function setActiveProfile(profileName) {
   try {
+    const safeProfileName = sanitizeProfileName(profileName);
+
     // Verify profile exists
-    const profilePath = path.join(PROFILES_DIR, `${profileName}.json`);
+    const profilePath = path.join(PROFILES_DIR, `${safeProfileName}.json`);
     if (!fs.existsSync(profilePath)) {
-      throw new Error(`Profile '${profileName}' does not exist`);
+      throw new Error(`Profile '${safeProfileName}' does not exist`);
     }
 
     // Write to config file
-    fs.writeFileSync(PROFILE_CONFIG_FILE, profileName);
+    fs.writeFileSync(PROFILE_CONFIG_FILE, safeProfileName);
     return true;
   } catch (error) {
     console.error(`Error setting active profile: ${error.message}`);
@@ -145,7 +170,8 @@ export function setActiveProfile(profileName) {
  */
 export function createProfile(name, config) {
   try {
-    const profilePath = path.join(PROFILES_DIR, `${name}.json`);
+    const safeName = sanitizeProfileName(name);
+    const profilePath = path.join(PROFILES_DIR, `${safeName}.json`);
 
     // Check if profile already exists
     if (fs.existsSync(profilePath)) {
@@ -153,8 +179,8 @@ export function createProfile(name, config) {
     }
 
     const profile = {
-      name: name,
-      description: config.description || `Custom profile: ${name}`,
+      name: safeName,
+      description: config.description || `Custom profile: ${safeName}`,
       commandAliases: config.commandAliases || {},
       hooks: config.hooks || {}
     };

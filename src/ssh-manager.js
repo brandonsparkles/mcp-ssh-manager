@@ -1,11 +1,13 @@
 import { Client } from 'ssh2';
 import fs from 'fs';
 import os from 'os';
-import { promisify } from 'util';
-import crypto from 'crypto';
-import { isHostKnown, getCurrentHostKey, addHostKey, updateHostKey } from './ssh-key-manager.js';
-import { configLoader } from './config-loader.js';
+import { getCurrentHostKey, addHostKey } from './ssh-key-manager.js';
 import { logger } from './logger.js';
+
+function shellQuote(value) {
+  const quote = String.fromCharCode(39);
+  return quote + String(value).replace(/'/g, quote + '\\' + quote + quote) + quote;
+}
 
 class SSHManager {
   constructor(config) {
@@ -42,49 +44,12 @@ class SSHManager {
         username: this.config.user,
         readyTimeout: 60000, // Increased from 20000 to 60000 for slow connections
         keepaliveInterval: 10000,
+        // Add compatibility options for problematic servers
         algorithms: {
-          kex: [
-            'curve25519-sha256',
-            'curve25519-sha256@libssh.org',
-            'ecdh-sha2-nistp256',
-            'ecdh-sha2-nistp384',
-            'ecdh-sha2-nistp521',
-            'diffie-hellman-group-exchange-sha256',
-            'diffie-hellman-group16-sha512',
-            'diffie-hellman-group15-sha512',
-            'diffie-hellman-group14-sha256',
-            'diffie-hellman-group-exchange-sha1',
-            'diffie-hellman-group14-sha1',
-          ],
-          cipher: [
-            'aes128-gcm@openssh.com',
-            'aes256-gcm@openssh.com',
-            'aes128-ctr',
-            'aes192-ctr',
-            'aes256-ctr',
-            'aes128-gcm',
-            'aes256-gcm',
-            'aes128-cbc',
-            'aes192-cbc',
-            'aes256-cbc',
-          ],
-          serverHostKey: [
-            'ecdsa-sha2-nistp256',
-            'ecdsa-sha2-nistp384',
-            'ecdsa-sha2-nistp521',
-            'rsa-sha2-512',
-            'rsa-sha2-256',
-            'ssh-ed25519',
-            'ssh-rsa',
-          ],
-          hmac: [
-            'hmac-sha2-256-etm@openssh.com',
-            'hmac-sha2-512-etm@openssh.com',
-            'hmac-sha1-etm@openssh.com',
-            'hmac-sha2-256',
-            'hmac-sha2-512',
-            'hmac-sha1',
-          ],
+          kex: ['ecdh-sha2-nistp256', 'ecdh-sha2-nistp384', 'ecdh-sha2-nistp521', 'diffie-hellman-group-exchange-sha256', 'diffie-hellman-group14-sha256', 'diffie-hellman-group14-sha1'],
+          cipher: ['aes128-ctr', 'aes192-ctr', 'aes256-ctr', 'aes128-gcm', 'aes256-gcm', 'aes128-cbc', 'aes192-cbc', 'aes256-cbc'],
+          serverHostKey: ['rsa-sha2-512', 'rsa-sha2-256', 'ssh-rsa', 'ecdsa-sha2-nistp256', 'ecdsa-sha2-nistp384', 'ecdsa-sha2-nistp521', 'ssh-ed25519'],
+          hmac: ['hmac-sha2-256', 'hmac-sha2-512', 'hmac-sha1']
         },
         debug: (info) => {
           if (info.includes('Handshake') || info.includes('error')) {
@@ -95,20 +60,22 @@ class SSHManager {
 
       // Add host key verification callback if enabled
       if (this.hostKeyVerification) {
-        connConfig.hostVerifier = (hashedKey) => {
+        connConfig.hostVerifier = (hostKey) => {
           const port = this.config.port || 22;
           const host = this.config.host;
+          const presentedKey = Buffer.isBuffer(hostKey) ? hostKey.toString('base64') : null;
 
-          // Check if host is already known
-          if (isHostKnown(host, port)) {
-            // For now, accept all known hosts
-            // TODO: Implement proper fingerprint comparison once we understand SSH2's hash format
+          // Check if host is already known and the presented key matches.
+          const knownKeys = getCurrentHostKey(host, port) || [];
+          if (presentedKey && knownKeys.some(key => key.key === presentedKey)) {
             logger.info('Host key verified', { host, port });
             return true;
           }
 
-          // Host is not known
-          logger.info('New host detected', { host, port });
+          if (knownKeys.length > 0) {
+            logger.error('SSH host key mismatch', { host, port });
+            return false;
+          }
 
           // If autoAcceptHostKey is enabled, accept and add the key
           if (this.autoAcceptHostKey) {
@@ -129,10 +96,8 @@ class SSHManager {
             return true;
           }
 
-          // For backward compatibility, accept new hosts by default
-          // In production, you might want to prompt the user or check a whitelist
-          logger.warn('Auto-accepting new host', { host, port });
-          return true;
+          logger.warn('Rejecting unknown SSH host key', { host, port });
+          return false;
         };
       }
 
@@ -153,7 +118,7 @@ class SSHManager {
         connConfig.password = this.config.password;
       }
 
-      // Use provided stream for proxy jump connections
+      // Use provided stream for proxy jump / proxy command connections
       if (options.sock) {
         connConfig.sock = options.sock;
       }
@@ -168,7 +133,7 @@ class SSHManager {
     }
 
     const { timeout = 30000, cwd, rawCommand = false } = options;
-    const fullCommand = (cwd && !rawCommand) ? `cd ${cwd} && ${command}` : command;
+    const fullCommand = (cwd && !rawCommand) ? `cd ${shellQuote(cwd)} && ${command}` : command;
 
     return new Promise((resolve, reject) => {
       let stdout = '';
@@ -255,7 +220,7 @@ class SSHManager {
     }
 
     const { cwd, onStdout, onStderr } = options;
-    const fullCommand = cwd ? `cd ${cwd} && ${command}` : command;
+    const fullCommand = cwd ? `cd ${shellQuote(cwd)} && ${command}` : command;
 
     return new Promise((resolve, reject) => {
       this.client.exec(fullCommand, (err, stream) => {
@@ -464,7 +429,6 @@ class SSHManager {
   }
 
   async putFiles(files, options = {}) {
-    const sftp = await this.getSFTP();
     const results = [];
 
     for (const file of files) {

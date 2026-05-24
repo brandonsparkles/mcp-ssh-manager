@@ -332,7 +332,7 @@ export function getSession(sessionId) {
 export function listSessions() {
   const activeSessions = [];
 
-  for (const [id, session] of sessions.entries()) {
+  for (const session of sessions.values()) {
     if (session.state !== SESSION_STATES.CLOSED) {
       activeSessions.push(session.getInfo());
     }
@@ -361,7 +361,7 @@ export function closeSession(sessionId) {
 export function closeServerSessions(serverName) {
   let closedCount = 0;
 
-  for (const [id, session] of sessions.entries()) {
+  for (const session of sessions.values()) {
     if (session.serverName === serverName) {
       session.close();
       closedCount++;

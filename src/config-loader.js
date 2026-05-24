@@ -32,6 +32,20 @@ function normalizeMode(raw, serverName) {
   return normalized;
 }
 
+function formatEnvValue(value) {
+  return `"${String(value)
+    .replace(/\\/g, '\\\\')
+    .replace(/\n/g, '\\n')
+    .replace(/\r/g, '\\r')
+    .replace(/"/g, '\\"')}"`;
+}
+
+function pushEnvLine(lines, key, value) {
+  if (value !== undefined && value !== null && value !== '') {
+    lines.push(`${key}=${formatEnvValue(value)}`);
+  }
+}
+
 export class ConfigLoader {
   constructor() {
     this.servers = new Map();
@@ -133,6 +147,7 @@ export class ConfigLoader {
           passphrase: serverConfig.passphrase,
           port: serverConfig.port || 22,
           defaultDir: serverConfig.default_dir || serverConfig.default_directory || serverConfig.cwd,
+          siteUser: serverConfig.site_user || serverConfig.siteUser,
           sudoPassword: serverConfig.sudo_password,
           description: serverConfig.description,
           platform: serverConfig.platform ? serverConfig.platform.toLowerCase() : undefined,
@@ -196,6 +211,7 @@ export class ConfigLoader {
           passphrase: env[`SSH_SERVER_${match[1]}_PASSPHRASE`],
           port: parseInt(env[`SSH_SERVER_${match[1]}_PORT`] || '22'),
           defaultDir: env[`SSH_SERVER_${match[1]}_DEFAULT_DIR`],
+          siteUser: env[`SSH_SERVER_${match[1]}_SITE_USER`] || env[`SSH_SERVER_${match[1]}_SITEUSER`],
           sudoPassword: env[`SSH_SERVER_${match[1]}_SUDO_PASSWORD`],
           description: env[`SSH_SERVER_${match[1]}_DESCRIPTION`],
           platform: (env[`SSH_SERVER_${match[1]}_PLATFORM`] || '').toLowerCase() || undefined,
@@ -254,6 +270,7 @@ export class ConfigLoader {
       if (server.keyPath) serverConfig.key_path = server.keyPath;
       if (server.passphrase) serverConfig.passphrase = server.passphrase;
       if (server.defaultDir) serverConfig.default_dir = server.defaultDir;
+      if (server.siteUser) serverConfig.site_user = server.siteUser;
       if (server.sudoPassword) serverConfig.sudo_password = server.sudoPassword;
       if (server.description) serverConfig.description = server.description;
       if (server.platform) serverConfig.platform = server.platform;
@@ -287,30 +304,31 @@ export class ConfigLoader {
     for (const [name, server] of this.servers) {
       const upperName = name.toUpperCase();
       lines.push(`# Server: ${name}`);
-      lines.push(`SSH_SERVER_${upperName}_HOST=${server.host}`);
-      lines.push(`SSH_SERVER_${upperName}_USER=${server.user}`);
-      if (server.password) lines.push(`SSH_SERVER_${upperName}_PASSWORD="${server.password}"`);
-      if (server.keyPath) lines.push(`SSH_SERVER_${upperName}_KEYPATH=${server.keyPath}`);
-      if (server.passphrase) lines.push(`SSH_SERVER_${upperName}_PASSPHRASE="${server.passphrase}"`);
+      pushEnvLine(lines, `SSH_SERVER_${upperName}_HOST`, server.host);
+      pushEnvLine(lines, `SSH_SERVER_${upperName}_USER`, server.user);
+      pushEnvLine(lines, `SSH_SERVER_${upperName}_PASSWORD`, server.password);
+      pushEnvLine(lines, `SSH_SERVER_${upperName}_KEYPATH`, server.keyPath);
+      pushEnvLine(lines, `SSH_SERVER_${upperName}_PASSPHRASE`, server.passphrase);
       lines.push(`SSH_SERVER_${upperName}_PORT=${server.port || 22}`);
-      if (server.defaultDir) lines.push(`SSH_SERVER_${upperName}_DEFAULT_DIR=${server.defaultDir}`);
-      if (server.sudoPassword) lines.push(`SSH_SERVER_${upperName}_SUDO_PASSWORD="${server.sudoPassword}"`);
-      if (server.description) lines.push(`SSH_SERVER_${upperName}_DESCRIPTION="${server.description}"`);
-      if (server.platform) lines.push(`SSH_SERVER_${upperName}_PLATFORM=${server.platform}`);
-      if (server.proxyJump) lines.push(`SSH_SERVER_${upperName}_PROXYJUMP=${server.proxyJump}`);
-      if (server.proxyCommand) lines.push(`SSH_SERVER_${upperName}_PROXYCOMMAND=${server.proxyCommand}`);
+      pushEnvLine(lines, `SSH_SERVER_${upperName}_DEFAULT_DIR`, server.defaultDir);
+      pushEnvLine(lines, `SSH_SERVER_${upperName}_SITE_USER`, server.siteUser);
+      pushEnvLine(lines, `SSH_SERVER_${upperName}_SUDO_PASSWORD`, server.sudoPassword);
+      pushEnvLine(lines, `SSH_SERVER_${upperName}_DESCRIPTION`, server.description);
+      pushEnvLine(lines, `SSH_SERVER_${upperName}_PLATFORM`, server.platform);
+      pushEnvLine(lines, `SSH_SERVER_${upperName}_PROXYJUMP`, server.proxyJump);
+      pushEnvLine(lines, `SSH_SERVER_${upperName}_PROXYCOMMAND`, server.proxyCommand);
       // Security fields — only emit when non-default to avoid clutter in
       // generated .env files for users who never opted in.
       if (server.mode && server.mode !== 'unrestricted') {
-        lines.push(`SSH_SERVER_${upperName}_MODE=${server.mode}`);
+        pushEnvLine(lines, `SSH_SERVER_${upperName}_MODE`, server.mode);
       }
       if (server.allowPatterns && server.allowPatterns.length > 0) {
-        lines.push(`SSH_SERVER_${upperName}_ALLOW_PATTERNS="${server.allowPatterns.join(';')}"`);
+        pushEnvLine(lines, `SSH_SERVER_${upperName}_ALLOW_PATTERNS`, server.allowPatterns.join(';'));
       }
       if (server.denyPatterns && server.denyPatterns.length > 0) {
-        lines.push(`SSH_SERVER_${upperName}_DENY_PATTERNS="${server.denyPatterns.join(';')}"`);
+        pushEnvLine(lines, `SSH_SERVER_${upperName}_DENY_PATTERNS`, server.denyPatterns.join(';'));
       }
-      if (server.auditLog) lines.push(`SSH_SERVER_${upperName}_AUDIT_LOG=${server.auditLog}`);
+      pushEnvLine(lines, `SSH_SERVER_${upperName}_AUDIT_LOG`, server.auditLog);
       lines.push('');
     }
 

@@ -115,7 +115,7 @@ class ServerGroups {
     // This will be populated from the main server config
     const servers = [];
 
-    for (const [key, value] of Object.entries(process.env)) {
+    for (const key of Object.keys(process.env)) {
       if (key.startsWith('SSH_SERVER_') && key.endsWith('_HOST')) {
         const serverName = key.replace('SSH_SERVER_', '').replace('_HOST', '').toLowerCase();
         servers.push(serverName);

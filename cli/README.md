@@ -37,13 +37,25 @@ chmod +x ~/.ssh-manager-cli/ssh-manager
 **Required:**
 - `bash` (4.0+)
 - `ssh`
-- `rsync`
 
 **Optional:**
+- `rsync` - Required only for `ssh-manager sync push|pull`
 - `jq` - For JSON configuration management
 - `sshpass` - For password authentication testing
 
 ## Usage
+
+### Current Direct Commands
+
+```bash
+ssh-manager server ...
+ssh-manager ssh <server>         # alias: connect
+ssh-manager exec <server> "<cmd>"
+ssh-manager sync <push|pull> ...
+ssh-manager tunnel <create|list> ...
+ssh-manager tools ...
+ssh-manager config <edit|show|init>
+```
 
 ### Server Management
 
@@ -114,7 +126,7 @@ ssh-manager exec prod1 "df -h | grep /var"
 
 ### Server Configuration (.env)
 
-Servers are stored in `.env` file in your project root:
+By default, servers are stored in `~/.ssh-manager/.env` (or `SSH_MANAGER_ENV` if set):
 
 ```env
 # Production Server

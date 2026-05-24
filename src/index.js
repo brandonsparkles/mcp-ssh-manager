@@ -6,10 +6,25 @@ import { z } from 'zod';
 import SSHManager from './ssh-manager.js';
 import * as dotenv from 'dotenv';
 import fs from 'fs';
-import path from 'path';
 import os from 'os';
+import path from 'path';
 import { fileURLToPath } from 'url';
 import { configLoader } from './config-loader.js';
+import {
+  classifyCommandShape,
+  evaluatePolicy,
+  isValidUnixUser,
+  powershellSingleQuote,
+  resolveExecutionPlan,
+  resolveSiteUser,
+  shellQuote
+} from './policy.js';
+export {
+  resolveExecutionPlan,
+  resolveSiteUser,
+  shouldAutoRunAsSiteUser
+} from './policy.js';
+import { auditLog } from './audit.js';
 import {
   getTempFilename,
   buildDeploymentStrategy,
@@ -29,12 +44,6 @@ import {
   suggestAliases
 } from './command-aliases.js';
 import {
-  OUTPUT_LIMITS,
-  TIMEOUTS,
-  truncateOutput,
-  formatJSONResponse
-} from './config.js';
-import {
   initializeHooks,
   executeHook,
   toggleHook,
@@ -51,27 +60,22 @@ import {
   createSession,
   getSession,
   listSessions,
-  closeSession,
-  SESSION_STATES
+  closeSession
 } from './session-manager.js';
 import {
-  getGroup,
   createGroup,
   updateGroup,
   deleteGroup,
   addServersToGroup,
   removeServersFromGroup,
   listGroups,
-  executeOnGroup,
-  EXECUTION_STRATEGIES
+  executeOnGroup
 } from './server-groups.js';
 import {
   createTunnel,
-  getTunnel,
   listTunnels,
   closeTunnel,
-  closeServerTunnels,
-  TUNNEL_TYPES
+  closeServerTunnels
 } from './tunnel-manager.js';
 import {
   getHostKeyFingerprint,
@@ -101,23 +105,10 @@ import {
   buildListBackupsCommand,
   parseBackupsList,
   buildCleanupCommand,
-  buildCronScheduleCommand,
-  parseCronJobs
+  buildCronScheduleCommand
 } from './backup-manager.js';
 import {
   HEALTH_STATUS,
-  COMMON_SERVICES,
-  buildCPUCheckCommand,
-  buildMemoryCheckCommand,
-  buildDiskCheckCommand,
-  buildNetworkCheckCommand,
-  buildLoadAverageCommand,
-  buildUptimeCommand,
-  parseCPUUsage,
-  parseMemoryUsage,
-  parseDiskUsage,
-  parseNetworkStats,
-  determineOverallHealth,
   buildServiceStatusCommand,
   parseServiceStatus,
   buildProcessListCommand,
@@ -130,12 +121,10 @@ import {
   checkAlertThresholds,
   buildComprehensiveHealthCheckCommand,
   parseComprehensiveHealthCheck,
-  getCommonServices,
   resolveServiceName
 } from './health-monitor.js';
 import {
   DB_TYPES,
-  DB_PORTS,
   buildMySQLDumpCommand as buildDBMySQLDumpCommand,
   buildPostgreSQLDumpCommand as buildDBPostgreSQLDumpCommand,
   buildMongoDBDumpCommand as buildDBMongoDBDumpCommand,
@@ -154,24 +143,21 @@ import {
   isSafeQuery,
   parseDatabaseList,
   parseTableList,
-  buildEstimateSizeCommand,
   parseSize,
-  formatBytes,
-  getConnectionInfo
+  formatBytes
 } from './database-manager.js';
 import { loadToolConfig, isToolEnabled } from './tool-config-manager.js';
-import { evaluatePolicy } from './policy.js';
-import { auditLog } from './audit.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
+const packageJson = JSON.parse(fs.readFileSync(path.join(__dirname, '..', 'package.json'), 'utf8'));
 
 // Resolve .env file path with fallback chain:
 // 1. SSH_ENV_PATH env var (explicit override)
-// 2. ~/.ssh-manager/.env (user config dir — where ssh-manager CLI writes)
-// 3. process.cwd()/.env (standard working directory)
-// 4. ~/.env (home directory)
-// 5. __dirname/../.env (backward compat for local installs)
+// 2. ~/.ssh-manager/.env (user config dir)
+// 3. process.cwd()/.env
+// 4. ~/.env
+// 5. __dirname/../.env (backward compatibility)
 function resolveEnvFilePath() {
   if (process.env.SSH_ENV_PATH) {
     return process.env.SSH_ENV_PATH;
@@ -253,12 +239,12 @@ const KEEPALIVE_INTERVAL = 5 * 60 * 1000;
 // Map to store keepalive intervals
 const keepaliveIntervals = new Map();
 
-// Extra grace window so the remote `timeout` wrapper can exit cleanly
-// and return its timeout exit code before the local SSH exec timeout fires.
-const WRAPPED_COMMAND_TIMEOUT_GRACE_MS = 5000;
-
 // Map to track proxy jump dependencies (target -> jump server)
 const jumpDependencies = new Map();
+
+// Cache for delta polling responses (key -> result signature + metadata)
+const executeDeltaCache = new Map();
+const EXECUTE_DELTA_CACHE_LIMIT = 200;
 
 // Load server configuration (backward compatibility wrapper)
 function loadServerConfig() {
@@ -267,21 +253,12 @@ function loadServerConfig() {
   return servers;
 }
 
-// ── Per-server security policy plumbing (v3.5.0+) ──────────────────────────────
-//
-// Wire any handler that mutates remote state (or executes arbitrary commands)
-// through the helpers below. They are *always* safe to call: for any server
-// without a security mode configured (default `unrestricted`), evaluatePolicy()
-// early-returns { allowed: true } and auditLog() is a no-op when AUDIT_LOG is
-// absent — so pre-v3.5.0 configs see zero behavior change.
-
 function getServerConfig(serverName) {
   if (!serverName) return null;
-  return servers[String(serverName).toLowerCase()] || null;
+  const canonical = resolveServerName(String(serverName), servers) || String(serverName).toLowerCase();
+  return servers[canonical] || null;
 }
 
-// Apply policy + audit a denial in one shot. Returns null when allowed; returns
-// an MCP error response object when denied (handler should `return` it directly).
 function applyServerPolicy(serverName, toolName, args, command) {
   const serverConfig = getServerConfig(serverName);
   const policy = evaluatePolicy(serverConfig, toolName, command);
@@ -291,14 +268,8 @@ function applyServerPolicy(serverName, toolName, args, command) {
       content: [
         {
           type: 'text',
-          text: formatJSONResponse({
-            server: serverName,
-            tool: toolName,
-            success: false,
-            error: `Policy denied: ${policy.reason}`,
-            code: -2,
-          }),
-        },
+          text: `❌ Policy denied: ${policy.reason}`
+        }
       ],
       isError: true,
     };
@@ -306,52 +277,182 @@ function applyServerPolicy(serverName, toolName, args, command) {
   return null;
 }
 
-// Convenience for the success-path audit: handlers call this after execution to
-// record the outcome. No-op when AUDIT_LOG is not configured.
 function auditOk(serverName, toolName, args, executionResult) {
   const serverConfig = getServerConfig(serverName);
   auditLog(serverConfig, toolName, args, { allowed: true }, executionResult);
 }
 
+function buildOutputPreview(output, maxChars) {
+  const text = String(output || '');
+  const safeMax = Number.isFinite(maxChars) ? Math.max(120, Math.min(Math.floor(maxChars), 200000)) : 1200;
+  const lineCount = text.length === 0 ? 0 : text.split('\n').length;
+
+  if (text.length <= safeMax) {
+    return {
+      preview: text,
+      truncated: false,
+      total_chars: text.length,
+      total_lines: lineCount
+    };
+  }
+
+  return {
+    preview: `${text.slice(0, safeMax)}\n...[truncated ${text.length - safeMax} chars]`,
+    truncated: true,
+    total_chars: text.length,
+    total_lines: lineCount
+  };
+}
+
+function buildExecuteDeltaKey({ serverName, workingDir, runAsMode, executionUser, command, deltaKey }) {
+  const base = deltaKey && String(deltaKey).trim().length > 0
+    ? String(deltaKey).trim()
+    : `${serverName}|${workingDir || ''}|${runAsMode}|${executionUser}|${command}`;
+  return base;
+}
+
+function buildExecuteResultSignature(result) {
+  const hash = crypto.createHash('sha256');
+  hash.update(String(result.code ?? ''));
+  hash.update('\n');
+  hash.update(String(result.stdout || ''));
+  hash.update('\n');
+  hash.update(String(result.stderr || ''));
+  return hash.digest('hex');
+}
+
+function assertSafeCronSchedule(schedule) {
+  const fields = String(schedule || '').trim().split(/\s+/);
+  if (fields.length !== 5 || fields.some(field => !/^[A-Za-z0-9*,/-]+$/.test(field))) {
+    throw new Error('Cron schedule must contain exactly 5 safe cron fields');
+  }
+}
+
+function assertSafeBackupName(name) {
+  if (!/^[A-Za-z0-9_.-]+$/.test(name || '')) {
+    throw new Error('Backup name contains unsafe characters');
+  }
+}
+
+function parseProxyCommandArgs(proxyCommand, host, port) {
+  const commandTemplate = String(proxyCommand || '').trim();
+  const hostValue = String(host || '').trim();
+  const portValue = Number(port);
+
+  if (commandTemplate.length === 0) {
+    throw new Error('ProxyCommand is empty');
+  }
+  if (!Number.isInteger(portValue) || portValue < 1 || portValue > 65535) {
+    throw new Error('ProxyCommand port is invalid');
+  }
+  if (!/^[A-Za-z0-9._:[\]-]+$/.test(hostValue)) {
+    throw new Error('ProxyCommand host contains unsafe characters');
+  }
+  if (/[|&;<>()`$\\\n\r]/.test(commandTemplate)) {
+    throw new Error('ProxyCommand must not contain shell control operators');
+  }
+
+  const rawTokens = commandTemplate.match(/"(?:\\.|[^"])*"|'(?:\\.|[^'])*'|[^\s]+/g) || [];
+  if (rawTokens.length === 0) {
+    throw new Error('ProxyCommand has no executable');
+  }
+
+  const stripQuotes = (value) => {
+    if (value.length >= 2 && ((value.startsWith('"') && value.endsWith('"')) || (value.startsWith('\'') && value.endsWith('\'')))) {
+      return value.slice(1, -1);
+    }
+    return value;
+  };
+
+  const resolvedTokens = rawTokens.map((token) => stripQuotes(token)
+    .replace(/%h/g, hostValue)
+    .replace(/%p/g, String(portValue)));
+
+  return {
+    command: resolvedTokens[0],
+    args: resolvedTokens.slice(1)
+  };
+}
+
+async function createProxyCommandSocket(proxyCommand, host, port) {
+  const { spawn } = await import('child_process');
+  const { Duplex } = await import('stream');
+  const { command, args } = parseProxyCommandArgs(proxyCommand, host, port);
+
+  return new Promise((resolve, reject) => {
+    const child = spawn(command, args, {
+      shell: false,
+      stdio: ['pipe', 'pipe', 'pipe']
+    });
+
+    const socket = Duplex.from({
+      readable: child.stdout,
+      writable: child.stdin,
+      allowHalfOpen: false
+    });
+
+    child.stderr.on('data', (chunk) => {
+      process.stderr.write(`[proxy-command] ${chunk}`);
+    });
+
+    let settled = false;
+    const settle = (fn, arg) => {
+      if (settled) return;
+      settled = true;
+      fn(arg);
+    };
+
+    socket.on('close', () => {
+      if (!child.killed) child.kill();
+    });
+
+    child.on('error', (err) => settle(reject, err));
+    child.on('spawn', () => settle(resolve, socket));
+    child.on('exit', (code, signal) => {
+      if (!settled && code !== 0) {
+        settle(reject, new Error(`Proxy command exited with code ${code}${signal ? ` (${signal})` : ''}`));
+      } else if (settled && code !== 0 && !signal && !socket.destroyed) {
+        socket.destroy(new Error(`Proxy command exited with code ${code}`));
+      }
+    });
+  });
+}
+
 // Execute command with timeout - using child_process timeout for real kill
-async function execCommandWithTimeout(ssh, command, options = {}, timeoutMs = 30000) {
-  // Pass through rawCommand and platform if specified
+async function execCommandWithTimeout(ssh, command, options = {}, timeoutMs = 300000) {
+  // Pass through rawCommand if specified
   const { rawCommand, platform = 'linux', ...otherOptions } = options;
 
-  // Windows targets: encode the command as PowerShell -EncodedCommand (UTF-16
-  // LE base64). This is the standard approach (used by Ansible / Chef / Puppet)
-  // because cmd.exe's quoting rules are inconsistent across versions and break
-  // commands containing $vars, $(...) subexpressions, double-quoted strings,
-  // pipes, etc. Base64 sidesteps all escape issues entirely.
   if (platform === 'windows' && !rawCommand) {
-    // Suppress progress (avoids CLIXML sentinels in stderr) + force UTF-8 stdout
-    const prelude = `$ProgressPreference='SilentlyContinue'; [Console]::OutputEncoding=[System.Text.Encoding]::UTF8;`;
+    const prelude = '$ProgressPreference=\'SilentlyContinue\'; [Console]::OutputEncoding=[System.Text.Encoding]::UTF8;';
     const fullPSCommand = `${prelude} ${command}`;
     const utf16le = Buffer.from(fullPSCommand, 'utf16le');
     const b64 = utf16le.toString('base64');
-    // -OutputFormat Text prevents stderr/info streams from being CLIXML-encoded
     const wrappedCommand = `powershell -NoProfile -OutputFormat Text -EncodedCommand ${b64}`;
-    return ssh.execCommand(wrappedCommand, { ...otherOptions, execOptions: { ...(otherOptions.execOptions || {}) } });
+    return ssh.execCommand(wrappedCommand, { ...otherOptions, timeout: timeoutMs });
   }
 
-  // For commands that might hang, use the system's timeout command if available.
-  // Note: the `!isWindows` guard that existed here previously is intentionally
-  // removed. Windows targets return early above (the `if (platform === 'windows'
-  // && !rawCommand)` block), so by the time execution reaches this line it is
-  // guaranteed to be a Linux/macOS target. The behaviour is identical; the old
-  // guard was made redundant by the early-return path.
-  const useSystemTimeout = timeoutMs > 0 && timeoutMs < 300000 && !rawCommand; // Max 5 minutes, not for raw commands
+  // For commands that might hang, use the system's timeout command if available
+  const useSystemTimeout = timeoutMs > 0 && timeoutMs < 300000 && !rawCommand && platform !== 'windows'; // Max 5 minutes, not for raw commands
 
   if (useSystemTimeout) {
-    // Wrap command with timeout command (works on Linux/Mac)
+    const probeResult = await ssh.execCommand('command -v timeout || command -v gtimeout', {
+      ...otherOptions,
+      timeout: Math.min(timeoutMs, 5000)
+    });
+    const timeoutBinary = String(probeResult.stdout || '').split('\n').find((line) => line.trim() !== '')?.trim();
+
+    if (!timeoutBinary) {
+      return ssh.execCommand(command, { ...otherOptions, timeout: timeoutMs });
+    }
+
+    // Wrap command with timeout command (works on Linux/Mac when binary exists)
     const timeoutSeconds = Math.ceil(timeoutMs / 1000);
-    const wrappedCommand = `timeout ${timeoutSeconds} sh -c '${command.replace(/'/g, '\'\\\'\'')}'`;
+    const escapedCommand = command.replace(/'/g, "'\\''");
+    const wrappedCommand = `${timeoutBinary} ${timeoutSeconds} sh -c '${escapedCommand}'`;
 
     try {
-      const result = await ssh.execCommand(wrappedCommand, {
-        ...otherOptions,
-        timeout: timeoutMs + WRAPPED_COMMAND_TIMEOUT_GRACE_MS
-      });
+      const result = await ssh.execCommand(wrappedCommand, { ...otherOptions, timeout: timeoutMs + 5000 });
 
       // Check if timeout occurred (exit code 124 on Linux, 124 or 143 on Mac)
       if (result.code === 124 || result.code === 143) {
@@ -381,7 +482,7 @@ async function execCommandWithTimeout(ssh, command, options = {}, timeoutMs = 30
     }
   } else {
     // No timeout or very long timeout, execute normally
-    return ssh.execCommand(command, { ...options, timeout: timeoutMs });
+    return ssh.execCommand(command, { ...otherOptions, timeout: timeoutMs });
   }
 }
 
@@ -459,56 +560,6 @@ function cleanupOldConnections() {
   }
 }
 
-// Create a socket from a proxy command (e.g., "ncat --proxy 127.0.0.1:1080 --proxy-type socks5 %h %p")
-// The command is executed through the system shell, matching OpenSSH ProxyCommand semantics,
-// so quoted arguments and shell metacharacters work as users expect.
-async function createProxyCommandSocket(proxyCommand, host, port) {
-  const { spawn } = await import('child_process');
-  const { Duplex } = await import('stream');
-
-  const cmd = proxyCommand.replace(/%h/g, host).replace(/%p/g, port.toString());
-
-  return new Promise((resolve, reject) => {
-    const child = spawn(cmd, {
-      shell: true,
-      stdio: ['pipe', 'pipe', 'pipe']
-    });
-
-    const socket = Duplex.from({
-      readable: child.stdout,
-      writable: child.stdin,
-      allowHalfOpen: false
-    });
-
-    // Forward proxy stderr to the MCP server's stderr for debugging
-    child.stderr.on('data', (chunk) => {
-      process.stderr.write(`[proxy-command] ${chunk}`);
-    });
-
-    let settled = false;
-    const settle = (fn, arg) => {
-      if (settled) return;
-      settled = true;
-      fn(arg);
-    };
-
-    socket.on('close', () => {
-      if (!child.killed) child.kill();
-    });
-
-    child.on('error', (err) => settle(reject, err));
-    child.on('spawn', () => settle(resolve, socket));
-    child.on('exit', (code, signal) => {
-      // Only surface unexpected exits — a kill() after a successful connection is normal.
-      if (!settled && code !== 0) {
-        settle(reject, new Error(`Proxy command exited with code ${code}${signal ? ` (${signal})` : ''}`));
-      } else if (settled && code !== 0 && !signal && !socket.destroyed) {
-        socket.destroy(new Error(`Proxy command exited with code ${code}`));
-      }
-    });
-  });
-}
-
 // Get or create SSH connection with reconnection support
 async function getConnection(serverName) {
   const servers = loadServerConfig();
@@ -557,7 +608,6 @@ async function getConnection(serverName) {
     if (serverConfig.proxyJump) {
       const jumpServerName = serverConfig.proxyJump.toLowerCase();
 
-      // Validate jump server exists
       if (!servers[jumpServerName]) {
         throw new Error(
           `Proxy jump server "${serverConfig.proxyJump}" not found. ` +
@@ -565,7 +615,6 @@ async function getConnection(serverName) {
         );
       }
 
-      // Detect circular proxy jumps
       const visited = new Set([normalizedName]);
       let current = jumpServerName;
       while (current) {
@@ -576,21 +625,16 @@ async function getConnection(serverName) {
         current = servers[current]?.proxyJump?.toLowerCase() || null;
       }
 
-      // Connect to jump server (recursive — handles chained jumps)
       const jumpSSH = await getConnection(serverConfig.proxyJump);
-
-      // Create forwarded stream through the jump server
       const stream = await jumpSSH.forwardOut(
         '127.0.0.1', 0,
         serverConfig.host, serverConfig.port || 22
       );
 
-      // Connect target through the forwarded stream
       await ssh.connect({ sock: stream });
       jumpDependencies.set(normalizedName, jumpServerName);
       ssh.jumpConnection = jumpSSH;
     } else if (serverConfig.proxyCommand) {
-      // Create socket via proxy command (e.g., SOCKS5 proxy)
       const socket = await createProxyCommandSocket(
         serverConfig.proxyCommand,
         serverConfig.host,
@@ -600,7 +644,6 @@ async function getConnection(serverName) {
     } else {
       await ssh.connect();
     }
-
     connections.set(normalizedName, ssh);
     connectionTimestamps.set(normalizedName, Date.now());
 
@@ -630,10 +673,10 @@ async function getConnection(serverName) {
 // Create MCP server
 const server = new McpServer({
   name: 'mcp-ssh-manager',
-  version: '1.2.0',
+  version: packageJson.version,
 });
 
-logger.info('MCP Server initialized', { version: '1.2.0' });
+logger.info('MCP Server initialized', { version: packageJson.version });
 
 /**
  * Helper function to conditionally register tools based on configuration
@@ -643,7 +686,20 @@ logger.info('MCP Server initialized', { version: '1.2.0' });
  */
 function registerToolConditional(toolName, schema, handler) {
   if (isToolEnabled(toolName)) {
-    server.registerTool(toolName, schema, handler);
+    server.registerTool(toolName, schema, async (args) => {
+      // Generic policy gate for all tools; tools with bespoke policy logic
+      // (ssh_execute, ssh_python_as_user) keep their own detailed handling.
+      if (toolName !== 'ssh_execute' && toolName !== 'ssh_python_as_user') {
+        const serverName = args?.server || args?.serverName || args?.targetServer;
+        if (serverName) {
+          const denied = applyServerPolicy(serverName, toolName, args, args?.command);
+          if (denied) {
+            return denied;
+          }
+        }
+      }
+      return handler(args);
+    });
     logger.debug(`Registered tool: ${toolName}`);
   } else {
     logger.debug(`Skipped disabled tool: ${toolName}`);
@@ -651,126 +707,203 @@ function registerToolConditional(toolName, schema, handler) {
 }
 
 // Register available tools
+const executeHandler = async ({ server: serverName, command, cwd, timeout = 300000, run_as = 'auto', site_user, verbose = false, max_output_chars, max_output_tokens, delta = false, delta_key, delta_only_changes = false, allow_root_app_commands = false }) => {
+  try {
+    const ssh = await getConnection(serverName);
+
+    // Expand command aliases
+    const expandedCommand = expandCommandAlias(command);
+
+    const denied = applyServerPolicy(
+      serverName,
+      'ssh_execute',
+      { command: expandedCommand, cwd, run_as, site_user },
+      expandedCommand
+    );
+    if (denied) return denied;
+
+    // Execute hooks for bench commands
+    if (expandedCommand.includes('bench update')) {
+      await executeHook('pre-bench-update', {
+        server: serverName,
+        sshConnection: ssh,
+        defaultDir: cwd
+      });
+    }
+
+    // Resolve execution identity + working directory in one shared routing path.
+    const serverConfig = getServerConfig(serverName);
+    const executionPlan = resolveExecutionPlan({
+      serverName,
+      serverConfig,
+      command: expandedCommand,
+      cwd,
+      runAsMode: run_as,
+      requestedSiteUser: site_user,
+      allowRootAppCommands: allow_root_app_commands,
+      platform: serverConfig?.platform || 'linux'
+    });
+
+    // Log command execution
+    const compactCommand = expandedCommand.length > 240 ? `${expandedCommand.slice(0, 240)}...[truncated]` : expandedCommand;
+    const historyCommand = `[ssh_execute] run_as=${executionPlan.runAsMode} user=${executionPlan.executionUser} shape=${classifyCommandShape(expandedCommand)} cmd=${compactCommand}`;
+    const startTime = logger.logCommand(serverName, historyCommand, executionPlan.workingDir);
+
+    const result = await execCommandWithTimeout(ssh, executionPlan.fullCommand, {
+      platform: serverConfig?.platform || 'linux'
+    }, timeout);
+
+    const effectiveMaxChars = Number.isFinite(max_output_chars)
+      ? max_output_chars
+      : (Number.isFinite(max_output_tokens) ? max_output_tokens * 4 : 1200);
+    const stdoutPreview = buildOutputPreview(result.stdout, effectiveMaxChars);
+    const stderrPreview = buildOutputPreview(result.stderr, effectiveMaxChars);
+    const commandShape = classifyCommandShape(expandedCommand);
+
+    let deltaChanged = true;
+    let deltaState = 'disabled';
+    let deltaCacheKey = null;
+    if (delta) {
+      deltaCacheKey = buildExecuteDeltaKey({
+        serverName,
+        workingDir: executionPlan.workingDir,
+        runAsMode: executionPlan.runAsMode,
+        executionUser: executionPlan.executionUser,
+        command: expandedCommand,
+        deltaKey: delta_key
+      });
+      const signature = buildExecuteResultSignature(result);
+      const previous = executeDeltaCache.get(deltaCacheKey);
+      deltaChanged = !previous || previous.signature !== signature;
+      deltaState = previous ? (deltaChanged ? 'changed' : 'unchanged') : 'first';
+      executeDeltaCache.set(deltaCacheKey, {
+        signature,
+        updated_at: new Date().toISOString()
+      });
+      if (executeDeltaCache.size > EXECUTE_DELTA_CACHE_LIMIT) {
+        const oldestKey = executeDeltaCache.keys().next().value;
+        if (oldestKey) executeDeltaCache.delete(oldestKey);
+      }
+    }
+
+    // Log command result
+    logger.logCommandResult(serverName, historyCommand, startTime, result, {
+      tool: 'ssh_execute',
+      run_as_mode: executionPlan.runAsMode,
+      execution_user: executionPlan.executionUser,
+      routing_reason: executionPlan.routingReason,
+      command_shape: commandShape,
+      stdout_chars: stdoutPreview.total_chars,
+      stderr_chars: stderrPreview.total_chars,
+      stdout_lines: stdoutPreview.total_lines,
+      stderr_lines: stderrPreview.total_lines,
+      stdout_truncated: stdoutPreview.truncated,
+      stderr_truncated: stderrPreview.truncated,
+      delta_enabled: delta,
+      delta_key: delta ? (delta_key || null) : null,
+      delta_state: deltaState
+    });
+    auditOk(serverName, 'ssh_execute', { command: expandedCommand, cwd, run_as, site_user }, {
+      code: result.code,
+      success: result.code === 0,
+    });
+
+    // Execute post-hooks for bench commands
+    if (expandedCommand.includes('bench update') && result.code === 0) {
+      await executeHook('post-bench-update', {
+        server: serverName,
+        sshConnection: ssh,
+        defaultDir: cwd
+      });
+    }
+
+    const suppressPreviews = delta && delta_only_changes && !deltaChanged;
+    const response = {
+      server: serverName,
+      command: expandedCommand,
+      run_as_mode: executionPlan.runAsMode,
+      execution_user: executionPlan.executionUser,
+      routing_reason: executionPlan.routingReason,
+      cwd: executionPlan.workingDir,
+      delta_enabled: delta,
+      delta_state: deltaState,
+      delta_changed: deltaChanged,
+      ...(delta ? { delta_key: delta_key || null } : {}),
+      stdout_preview: suppressPreviews ? '' : stdoutPreview.preview,
+      stderr_preview: suppressPreviews ? '' : stderrPreview.preview,
+      stdout_truncated: suppressPreviews ? false : stdoutPreview.truncated,
+      stderr_truncated: suppressPreviews ? false : stderrPreview.truncated,
+      stdout_chars: stdoutPreview.total_chars,
+      stderr_chars: stderrPreview.total_chars,
+      stdout_lines: stdoutPreview.total_lines,
+      stderr_lines: stderrPreview.total_lines,
+      code: result.code,
+      success: result.code === 0
+    };
+    if (suppressPreviews) {
+      response.note = 'No change since previous delta snapshot; previews suppressed.';
+    }
+
+    return {
+      content: [
+        {
+          type: 'text',
+          text: JSON.stringify(
+            verbose
+              ? { ...response, stdout: result.stdout, stderr: result.stderr }
+              : response,
+            null,
+            2
+          ),
+        },
+      ],
+    };
+  } catch (error) {
+    return {
+      content: [
+        {
+          type: 'text',
+          text: `❌ Error: ${error.message}`,
+        },
+      ],
+    };
+  }
+};
+
 registerToolConditional(
   'ssh_execute',
   {
-    description: 'Execute command on remote SSH server',
+    description: 'Execute a remote shell command. Use this default tool for normal work: provide server, command, and optionally cwd. App paths under /var/www auto-run as the configured site user; output is preview-capped automatically.',
+    inputSchema: {
+      server: z.string().describe('Server name from configuration'),
+      command: z.string().describe('Command to execute'),
+      cwd: z.string().optional().describe('Working directory. Prefer this over embedding "cd ... &&" in command.')
+    }
+  },
+  executeHandler
+);
+
+registerToolConditional(
+  'ssh_execute_advanced',
+  {
+    description: 'Advanced remote command execution for rare overrides, polling, or full-output debugging. Prefer ssh_execute for normal work.',
     inputSchema: {
       server: z.string().describe('Server name from configuration'),
       command: z.string().describe('Command to execute'),
       cwd: z.string().optional().describe('Working directory (optional, uses default if configured)'),
-      timeout: z.number().optional().describe('Command timeout in milliseconds (default: 120000, max: 300000)')
+      timeout: z.number().optional().describe('Command timeout in milliseconds (default: 300000)'),
+      run_as: z.enum(['auto', 'root', 'site_user']).optional().describe('Rare override. "auto" chooses site user for app-level commands under /var/www, otherwise root.'),
+      site_user: z.string().optional().describe('Explicit site user hint for run_as="site_user" or run_as="auto".'),
+      verbose: z.boolean().optional().describe('When true, return full stdout/stderr instead of previews.'),
+      max_output_chars: z.number().optional().describe('Max characters returned per stream in non-verbose mode (default: 1200).'),
+      max_output_tokens: z.number().optional().describe('Deprecated alias for max_output_chars (~4 chars per token).'),
+      delta: z.boolean().optional().describe('When true, compares result against previous call and marks whether output changed.'),
+      delta_key: z.string().optional().describe('Stable key for delta comparisons across polling calls.'),
+      delta_only_changes: z.boolean().optional().describe('When true and delta=true, suppress previews when output is unchanged.'),
+      allow_root_app_commands: z.boolean().optional().describe('Override guardrail and allow root for app-level commands under /var/www.')
     }
   },
-  async ({ server: serverName, command, cwd, timeout = TIMEOUTS.DEFAULT_COMMAND_TIMEOUT }) => {
-    // Cap timeout at maximum allowed
-    const cappedTimeout = Math.min(timeout, TIMEOUTS.MAX_COMMAND_TIMEOUT);
-
-    // Expand aliases BEFORE policy evaluation so the user can't bypass a DENY
-    // regex by hiding a destructive command behind an alias.
-    const expandedCommand = expandCommandAlias(command);
-
-    const denied = applyServerPolicy(serverName, 'ssh_execute', { command, cwd }, expandedCommand);
-    if (denied) return denied;
-
-    try {
-      const ssh = await getConnection(serverName);
-
-      // Execute hooks for bench commands
-      if (expandedCommand.includes('bench update')) {
-        await executeHook('pre-bench-update', {
-          server: serverName,
-          sshConnection: ssh,
-          defaultDir: cwd
-        });
-      }
-
-      // Use provided cwd, or default_dir from config, or no cwd
-      const servers = loadServerConfig();
-      const serverConfig = servers[serverName.toLowerCase()];
-      const workingDir = cwd || serverConfig?.default_dir;
-      const platform = serverConfig?.platform || 'linux';
-
-      // Build cwd-prefixed command using platform-appropriate syntax
-      let fullCommand;
-      if (workingDir) {
-        if (platform === 'windows') {
-          const escapedDir = workingDir.replace(/'/g, "''");
-          fullCommand = `Set-Location '${escapedDir}'; ${expandedCommand}`;
-        } else {
-          fullCommand = `cd ${workingDir} && ${expandedCommand}`;
-        }
-      } else {
-        fullCommand = expandedCommand;
-      }
-
-      // Log command execution
-      const startTime = logger.logCommand(serverName, fullCommand, workingDir);
-
-      const result = await execCommandWithTimeout(ssh, fullCommand, { platform }, cappedTimeout);
-
-      // Log command result
-      logger.logCommandResult(serverName, fullCommand, startTime, result);
-
-      // Execute post-hooks for bench commands
-      if (expandedCommand.includes('bench update') && result.code === 0) {
-        await executeHook('post-bench-update', {
-          server: serverName,
-          sshConnection: ssh,
-          defaultDir: cwd
-        });
-      }
-
-      // Truncate output if too large to prevent Claude Code crashes
-      const stdout = truncateOutput(result.stdout);
-      const stderr = truncateOutput(result.stderr);
-
-      auditOk(serverName, 'ssh_execute', { command, cwd }, {
-        code: result.code,
-        success: result.code === 0,
-      });
-
-      return {
-        content: [
-          {
-            type: 'text',
-            text: formatJSONResponse({
-              server: serverName,
-              command: fullCommand,
-              stdout: stdout,
-              stderr: stderr,
-              code: result.code,
-              success: result.code === 0,
-            }),
-          },
-        ],
-      };
-    } catch (error) {
-      auditOk(serverName, 'ssh_execute', { command, cwd }, {
-        success: false,
-        error: error.message,
-      });
-      logger.error('ssh_execute failed', {
-        server: serverName,
-        error: error.message
-      });
-
-      return {
-        content: [
-          {
-            type: 'text',
-            text: formatJSONResponse({
-              server: serverName,
-              success: false,
-              error: truncateOutput(error.message, 1000),
-              code: -1
-            }),
-          },
-        ],
-        isError: true
-      };
-    }
-  }
+  executeHandler
 );
 
 registerToolConditional(
@@ -784,9 +917,6 @@ registerToolConditional(
     }
   },
   async ({ server: serverName, localPath, remotePath }) => {
-    const denied = applyServerPolicy(serverName, 'ssh_upload', { localPath, remotePath });
-    if (denied) return denied;
-
     try {
       const ssh = await getConnection(serverName);
 
@@ -802,8 +932,6 @@ registerToolConditional(
         duration: `${Date.now() - startTime}ms`
       });
 
-      auditOk(serverName, 'ssh_upload', { localPath, remotePath }, { success: true });
-
       return {
         content: [
           {
@@ -813,10 +941,6 @@ registerToolConditional(
         ],
       };
     } catch (error) {
-      auditOk(serverName, 'ssh_upload', { localPath, remotePath }, {
-        success: false,
-        error: error.message,
-      });
       logger.logTransfer('upload', serverName, localPath, remotePath, {
         success: false,
         error: error.message
@@ -898,15 +1022,13 @@ registerToolConditional(
       compress: z.boolean().optional().describe('Compress during transfer'),
       verbose: z.boolean().optional().describe('Show detailed progress'),
       checksum: z.boolean().optional().describe('Use checksum instead of timestamp for comparison'),
+      allowReleaseDirSync: z.boolean().optional().describe('Allow direct sync into /var/www/*/releases/* paths (dangerous; default false)'),
       timeout: z.number().optional().describe('Timeout in milliseconds (default: 30000)')
     }
   },
-  async ({ server: serverName, source, destination, exclude = [], dryRun = false, delete: deleteFiles = false, compress = true, verbose = false, checksum = false, timeout = 30000 }) => {
-    const denied = applyServerPolicy(serverName, 'ssh_sync', { source, destination, dryRun, delete: deleteFiles });
-    if (denied) return denied;
-
+  async ({ server: serverName, source, destination, exclude = [], dryRun = false, delete: deleteFiles = false, compress = true, verbose = false, checksum = false, allowReleaseDirSync = false, timeout = 30000 }) => {
     try {
-      const ssh = await getConnection(serverName);
+      await getConnection(serverName);
       const servers = loadServerConfig();
       const serverConfig = servers[serverName.toLowerCase()];
 
@@ -986,9 +1108,24 @@ registerToolConditional(
         if (!fs.existsSync(localPath)) {
           throw new Error(`Local path does not exist: ${localPath}`);
         }
+
+        const normalizedRemotePath = path.posix.normalize(remotePath);
+        if (!allowReleaseDirSync && /^\/var\/www\/[^/]+\/releases(?:\/|$)/.test(normalizedRemotePath)) {
+          throw new Error(
+            `Refusing ssh_sync push into atomic release directory: ${normalizedRemotePath}\n` +
+            'Use git push + the site deploy.sh instead. Pass allowReleaseDirSync=true only for a deliberate, reviewed emergency.'
+          );
+        }
       } else {
         localPath = cleanDest;
         remotePath = cleanSource;
+      }
+
+      // Never preserve workstation UID/GID names when pushing to a remote host.
+      // macOS owners such as brandonlind:staff can exist on Linux and silently
+      // corrupt site ownership if rsync runs as root.
+      if (direction === 'push') {
+        rsyncOptions.push('--no-owner', '--no-group');
       }
 
       // Add SSH options for non-interactive mode
@@ -1038,8 +1175,9 @@ registerToolConditional(
         if (serverConfig.password) {
           // Use sshpass for password authentication
           rsyncCommand = 'sshpass';
-          rsyncArgs.push('-p', serverConfig.password);
+          rsyncArgs.push('-e');
           rsyncArgs.push('rsync');
+          processEnv.SSHPASS = serverConfig.password;
 
           // Add rsync options
           rsyncOptions.forEach(opt => rsyncArgs.push(opt));
@@ -1271,7 +1409,7 @@ registerToolConditional(
         const sessionId = `tail_${Date.now()}`;
 
         // Store the SSH stream for later cleanup
-        const stream = await ssh.execCommandStream(command, {
+        await ssh.execCommandStream(command, {
           onStdout: (chunk) => {
             // In a real implementation, this would stream to the client
             console.error(`[${serverName}:${file}] ${chunk}`);
@@ -1291,9 +1429,7 @@ registerToolConditional(
         };
       } else {
         // Non-follow mode - just get the output
-        const tailServers = loadServerConfig();
-        const tailServerConfig = tailServers[serverName.toLowerCase()];
-        const result = await execCommandWithTimeout(ssh, command, { platform: tailServerConfig?.platform }, 15000);
+        const result = await execCommandWithTimeout(ssh, command, {}, 15000);
 
         if (result.code !== 0) {
           throw new Error(result.stderr || 'Failed to tail file');
@@ -1400,12 +1536,10 @@ registerToolConditional(
 
       // Execute all monitoring commands
       const startTime = Date.now();
-      const monServers = loadServerConfig();
-      const monServerConfig = monServers[serverName.toLowerCase()];
 
       for (const [key, cmd] of Object.entries(commands)) {
         try {
-          const result = await execCommandWithTimeout(ssh, cmd, { platform: monServerConfig?.platform }, 10000);
+          const result = await execCommandWithTimeout(ssh, cmd, {}, 10000);
           if (result.code === 0) {
             output[key] = result.stdout.trim();
           } else {
@@ -1619,14 +1753,15 @@ registerToolConditional(
   },
   async ({ server: serverName, name }) => {
     try {
-      const ssh = await getConnection(serverName);
-      const session = await createSession(serverName, ssh);
+      const canonicalServerName = resolveServerName(serverName, servers) || serverName.toLowerCase();
+      const ssh = await getConnection(canonicalServerName);
+      const session = await createSession(canonicalServerName, ssh);
 
-      const sessionName = name || `Session on ${serverName}`;
+      const sessionName = name || `Session on ${canonicalServerName}`;
 
       logger.info('SSH session started', {
         id: session.id,
-        server: serverName,
+        server: canonicalServerName,
         name: sessionName
       });
 
@@ -1634,7 +1769,7 @@ registerToolConditional(
         content: [
           {
             type: 'text',
-            text: `🚀 SSH Session Started\n\nSession ID: ${session.id}\nServer: ${serverName}\nName: ${sessionName}\nState: ${session.state}\nWorking Directory: ${session.context.cwd}\n\nUse ssh_session_send to execute commands in this session.\nUse ssh_session_close to terminate the session.`
+            text: `🚀 SSH Session Started\n\nSession ID: ${session.id}\nServer: ${canonicalServerName}\nName: ${sessionName}\nState: ${session.state}\nWorking Directory: ${session.context.cwd}\n\nUse ssh_session_send to execute commands in this session.\nUse ssh_session_close to terminate the session.`
           }
         ]
       };
@@ -1663,20 +1798,29 @@ registerToolConditional(
     inputSchema: {
       session: z.string().describe('Session ID from ssh_session_start'),
       command: z.string().describe('Command to execute in the session'),
-      timeout: z.number().optional().describe('Command timeout in milliseconds (default: 30000)')
+      timeout: z.number().optional().describe('Command timeout in milliseconds (default: 300000)')
     }
   },
   async ({ session: sessionId, command, timeout = 30000 }) => {
     try {
       const session = getSession(sessionId);
 
-      // Resolve the session's underlying server to its policy.
-      const denied = applyServerPolicy(session.serverName, 'ssh_session_send', { session: sessionId, command }, command);
+      const denied = applyServerPolicy(
+        session.serverName,
+        'ssh_session_send',
+        { session: sessionId, command, timeout },
+        command
+      );
       if (denied) return denied;
 
       const startTime = Date.now();
       const result = await session.execute(command, { timeout });
       const duration = Date.now() - startTime;
+      auditOk(session.serverName, 'ssh_session_send', { session: sessionId, command, timeout }, {
+        code: result.success ? 0 : 1,
+        success: !!result.success,
+        error: result.success ? undefined : (result.error || result.output || 'session command failed')
+      });
 
       logger.info('Session command executed', {
         session: sessionId,
@@ -1904,38 +2048,42 @@ registerToolConditional(
       const result = await executeOnGroup(
         groupName,
         async (serverName) => {
-          // Per-server policy: each server in the group is evaluated independently.
-          // A server in readonly/restricted mode refuses the command; others
-          // execute normally. Refusal is surfaced as a per-server failure rather
-          // than aborting the whole group (group execution is best-effort).
-          const denied = applyServerPolicy(serverName, 'ssh_execute_group', { group: groupName, command, cwd }, command);
+          const denied = applyServerPolicy(
+            serverName,
+            'ssh_execute_group',
+            { group: groupName, command, cwd },
+            command
+          );
           if (denied) {
-            const errorText = denied.content?.[0]?.text || 'Policy denied';
-            return { stdout: '', stderr: errorText, code: -2, success: false };
+            return {
+              stdout: '',
+              stderr: 'Policy denied for this server.',
+              code: -2,
+              success: false
+            };
           }
+
           const ssh = await getConnection(serverName);
 
-          // Build full command with cwd if provided.
-          // Use platform-appropriate syntax: Set-Location for Windows (cmd.exe
-          // does not support `cd && `) vs cd && for Linux/macOS.
+          // Build full command with cwd if provided
           const servers = loadServerConfig();
           const serverConfig = servers[serverName.toLowerCase()];
-          const workingDir = cwd || serverConfig?.default_dir;
-          const platform = serverConfig?.platform || 'linux';
-          let fullCommand;
-          if (workingDir) {
-            if (platform === 'windows') {
-              // Single-quote escaping: replace ' with '' (PowerShell convention)
-              const escapedDir = workingDir.replace(/'/g, "''");
-              fullCommand = `Set-Location '${escapedDir}'; ${command}`;
-            } else {
-              fullCommand = `cd ${workingDir} && ${command}`;
-            }
-          } else {
-            fullCommand = command;
-          }
+          const workingDir = cwd || serverConfig?.defaultDir || serverConfig?.default_dir;
+          const isWindowsTarget = (serverConfig?.platform || 'linux') === 'windows';
+          const fullCommand = workingDir
+            ? (isWindowsTarget
+              ? `Set-Location -LiteralPath ${powershellSingleQuote(workingDir)}; ${command}`
+              : `cd ${shellQuote(workingDir)} && ${command}`)
+            : command;
 
-          const execResult = await execCommandWithTimeout(ssh, fullCommand, { platform }, 30000);
+          const execResult = await execCommandWithTimeout(ssh, fullCommand, {
+            platform: serverConfig?.platform || 'linux'
+          }, 30000);
+          auditOk(serverName, 'ssh_execute_group', { group: groupName, command, cwd }, {
+            code: execResult.code,
+            success: execResult.code === 0,
+            error: execResult.code === 0 ? undefined : (execResult.stderr || execResult.stdout || 'group command failed')
+          });
 
           return {
             stdout: execResult.stdout,
@@ -2191,17 +2339,11 @@ registerToolConditional(
         permissions: z.string().optional().describe('Set file permissions (e.g., "644")'),
         backup: z.boolean().optional().default(true).describe('Backup existing files'),
         restart: z.string().optional().describe('Service to restart after deployment'),
-        sudoPassword: z.string().optional().describe('Sudo password if needed (use with caution)')
+        sudoPassword: z.string().optional().describe('Unsupported: password-based sudo is refused to avoid exposing secrets in command text')
       }).optional().describe('Deployment options')
     }
   },
   async ({ server, files, options = {} }) => {
-    const denied = applyServerPolicy(server, 'ssh_deploy', {
-      files: files.map((f) => ({ local: f.local, remote: f.remote })),
-      options,
-    });
-    if (denied) return denied;
-
     try {
       const ssh = await getConnection(server);
 
@@ -2233,12 +2375,10 @@ registerToolConditional(
         results.push(`✅ Uploaded ${path.basename(file.local)} to temp location`);
 
         // Execute deployment strategy
-        const deployServers = loadServerConfig();
-        const deployServerConfig = deployServers[server.toLowerCase()];
         for (const step of strategy.steps) {
-          const command = step.command.replace('{{tempFile}}', tempFile);
+          const command = step.command.replace('{{tempFileQuoted}}', shellQuote(tempFile));
 
-          const result = await execCommandWithTimeout(ssh, command, { platform: deployServerConfig?.platform }, 15000);
+          const result = await execCommandWithTimeout(ssh, command, {}, 15000);
 
           if (result.code !== 0 && step.type !== 'backup') {
             throw new Error(`${step.type} failed: ${result.stderr}`);
@@ -2292,68 +2432,40 @@ registerToolConditional(
     inputSchema: {
       server: z.string().describe('Server name or alias'),
       command: z.string().describe('Command to execute with sudo'),
-      password: z.string().optional().describe('Sudo password (will be masked in output)'),
+      password: z.string().optional().describe('Unsupported: password-based sudo is refused to avoid exposing secrets in command text'),
       cwd: z.string().optional().describe('Working directory'),
-      timeout: z.number().optional().describe('Command timeout in milliseconds (default: 30000)')
+      timeout: z.number().optional().describe('Command timeout in milliseconds (default: 300000)')
     }
   },
-  async ({ server, command, password, cwd, timeout = 30000 }) => {
-    // ssh_execute_sudo is in READONLY_BLOCKED_TOOLS, so readonly mode blocks
-    // it at the tool level. In restricted mode the command itself is matched
-    // against ALLOW/DENY patterns.
-    const denied = applyServerPolicy(server, 'ssh_execute_sudo', { command, cwd }, command);
-    if (denied) return denied;
-
+  async ({ server, command, password, cwd, timeout = 300000 }) => {
     try {
       const ssh = await getConnection(server);
       const servers = loadServerConfig();
       const resolvedName = resolveServerName(server, servers);
       const serverConfig = servers[resolvedName];
 
-      // Build the full command
-      let fullCommand = command;
-
-      // Add sudo if not already present
-      if (!fullCommand.startsWith('sudo ')) {
-        fullCommand = `sudo ${fullCommand}`;
+      if (password || serverConfig?.sudoPassword || serverConfig?.sudo_password) {
+        throw new Error('Password-based sudo is not supported because it exposes secrets in remote command text; configure NOPASSWD sudo and retry without a password.');
       }
 
-      // Add password if provided
-      if (password) {
-        fullCommand = `echo "${password}" | sudo -S ${command.replace(/^sudo /, '')}`;
-      } else if (serverConfig?.sudo_password) {
-        // Use configured sudo password if available
-        fullCommand = `echo "${serverConfig.sudo_password}" | sudo -S ${command.replace(/^sudo /, '')}`;
-      }
+      // Build the full command. Use non-interactive sudo so this never hangs
+      // waiting for a password prompt.
+      let fullCommand = `sudo -n ${command.replace(/^sudo\s+/, '')}`;
 
       // Add working directory if specified
-      const platform = serverConfig?.platform || 'linux';
       if (cwd) {
-        if (platform === 'windows') {
-          const escapedDir = cwd.replace(/'/g, "''");
-          fullCommand = `Set-Location '${escapedDir}'; ${fullCommand}`;
-        } else {
-          fullCommand = `cd ${cwd} && ${fullCommand}`;
-        }
-      } else if (serverConfig?.default_dir) {
-        if (platform === 'windows') {
-          const escapedDir = serverConfig.default_dir.replace(/'/g, "''");
-          fullCommand = `Set-Location '${escapedDir}'; ${fullCommand}`;
-        } else {
-          fullCommand = `cd ${serverConfig.default_dir} && ${fullCommand}`;
-        }
+        fullCommand = `cd ${shellQuote(cwd)} && ${fullCommand}`;
+      } else if (serverConfig?.defaultDir || serverConfig?.default_dir) {
+        fullCommand = `cd ${shellQuote(serverConfig.defaultDir || serverConfig.default_dir)} && ${fullCommand}`;
       }
 
-      const result = await execCommandWithTimeout(ssh, fullCommand, { platform }, timeout);
-
-      // Mask password in output for security
-      const maskedCommand = fullCommand.replace(/echo "[^"]+" \| sudo -S/, 'sudo');
+      const result = await execCommandWithTimeout(ssh, fullCommand, {}, timeout);
 
       return {
         content: [
           {
             type: 'text',
-            text: `🔐 Sudo command executed\nServer: ${server}\nCommand: ${maskedCommand}\nExit code: ${result.code}\n\nOutput:\n${result.stdout || result.stderr}`,
+            text: `🔐 Sudo command executed\nServer: ${server}\nCommand: ${fullCommand}\nExit code: ${result.code}\n\nOutput:\n${result.stdout || result.stderr}`,
           },
         ],
       };
@@ -3000,14 +3112,7 @@ registerToolConditional(
       autoAccept: z.boolean().optional().describe('Automatically accept new keys (use with caution)')
     }
   },
-  async ({ action, server, autoAccept = false }) => {
-    // Mutating actions (accept, remove) are blocked in readonly mode at the
-    // tool level. Pure-read actions (verify, list, check) are allowed regardless,
-    // so we only gate when the action would modify state.
-    if (server && (action === 'accept' || action === 'remove')) {
-      const denied = applyServerPolicy(server, 'ssh_key_manage', { action, autoAccept });
-      if (denied) return denied;
-    }
+  async ({ action, server }) => {
     try {
       const servers = loadServerConfig();
       let resolvedName, serverConfig, host, port;
@@ -3364,9 +3469,6 @@ registerToolConditional(
     }
   },
   async ({ server: serverName, type, name, database, dbUser, dbPassword, dbHost, dbPort, paths, exclude, backupDir, retention = 7, compress = true }) => {
-    const denied = applyServerPolicy(serverName, 'ssh_backup_create', { type, name, database, paths });
-    if (denied) return denied;
-
     try {
       const ssh = await getConnection(serverName);
 
@@ -3651,9 +3753,6 @@ registerToolConditional(
     }
   },
   async ({ server: serverName, backupId, database, dbUser, dbPassword, dbHost, dbPort, targetPath, backupDir }) => {
-    const denied = applyServerPolicy(serverName, 'ssh_backup_restore', { backupId, database, targetPath });
-    if (denied) return denied;
-
     try {
       const ssh = await getConnection(serverName);
       const backupDirectory = backupDir || DEFAULT_BACKUP_DIR;
@@ -3770,11 +3869,14 @@ registerToolConditional(
     }
   },
   async ({ server: serverName, schedule, type, name, database, paths, retention = 7 }) => {
-    const denied = applyServerPolicy(serverName, 'ssh_backup_schedule', { schedule, type, name, database, paths });
-    if (denied) return denied;
-
     try {
       const ssh = await getConnection(serverName);
+      assertSafeCronSchedule(schedule);
+      assertSafeBackupName(name);
+      const safeRetention = Number.parseInt(retention, 10);
+      if (!Number.isInteger(safeRetention) || safeRetention < 0) {
+        throw new Error('retention must be a non-negative integer');
+      }
 
       // Build backup script path
       const scriptPath = `/usr/local/bin/ssh-manager-backup-${name}.sh`;
@@ -3798,26 +3900,25 @@ registerToolConditional(
       // Add backup command based on type
       switch (type) {
       case BACKUP_TYPES.MYSQL:
-        scriptContent += `mysqldump --single-transaction --routines --triggers ${database} | gzip > "$BACKUP_FILE"\n`;
+        scriptContent += `mysqldump --single-transaction --routines --triggers ${shellQuote(database)} | gzip > "$BACKUP_FILE"\n`;
         break;
       case BACKUP_TYPES.POSTGRESQL:
-        scriptContent += `pg_dump --format=custom --clean --if-exists ${database} | gzip > "$BACKUP_FILE"\n`;
+        scriptContent += `pg_dump --format=custom --clean --if-exists ${shellQuote(database)} | gzip > "$BACKUP_FILE"\n`;
         break;
       case BACKUP_TYPES.MONGODB:
-        scriptContent += `mongodump --db ${database} --out /tmp/mongo_\${RANDOM} && tar -czf "$BACKUP_FILE" -C /tmp mongo_*\n`;
+        scriptContent += `mongodump --db ${shellQuote(database)} --out /tmp/mongo_\${RANDOM} && tar -czf "$BACKUP_FILE" -C /tmp mongo_*\n`;
         break;
       case BACKUP_TYPES.FILES:
-        scriptContent += `tar -czf "$BACKUP_FILE" ${paths.join(' ')}\n`;
+        scriptContent += `tar -czf "$BACKUP_FILE" ${paths.map(shellQuote).join(' ')}\n`;
         break;
       }
 
       // Add cleanup command
       scriptContent += '\n# Cleanup old backups\n';
-      scriptContent += `find "$BACKUP_DIR" -name "*_${name}_*" -type f -mtime +${retention} -delete\n`;
+      scriptContent += `find "$BACKUP_DIR" -name ${shellQuote(`*_${name}_*`)} -type f -mtime +${shellQuote(safeRetention)} -delete\n`;
 
       // Save script to remote server
-      const escapedScript = scriptContent.replace(/'/g, '\'\\\'\'');
-      await ssh.execCommand(`echo '${escapedScript}' > "${scriptPath}" && chmod +x "${scriptPath}"`);
+      await ssh.execCommand(`printf %s ${shellQuote(scriptContent)} > ${shellQuote(scriptPath)} && chmod +x ${shellQuote(scriptPath)}`);
 
       // Add to crontab
       const cronComment = `ssh-manager-backup-${name}`;
@@ -4072,12 +4173,6 @@ registerToolConditional(
     }
   },
   async ({ server: serverName, action, pid, signal = 'TERM', sortBy = 'cpu', limit = 20, filter }) => {
-    // Only the `kill` action mutates remote state — gate just that branch so
-    // operators on readonly servers can still `list` / `info` processes.
-    if (action === 'kill') {
-      const denied = applyServerPolicy(serverName, 'ssh_process_manager', { action, pid, signal });
-      if (denied) return denied;
-    }
     try {
       const ssh = await getConnection(serverName);
 
@@ -4225,11 +4320,6 @@ registerToolConditional(
     }
   },
   async ({ server: serverName, action, cpuThreshold, memoryThreshold, diskThreshold, enabled = true }) => {
-    // `set` writes config on the remote; `get` and `check` are read-only.
-    if (action === 'set') {
-      const denied = applyServerPolicy(serverName, 'ssh_alert_setup', { action, cpuThreshold, memoryThreshold, diskThreshold, enabled });
-      if (denied) return denied;
-    }
     try {
       const ssh = await getConnection(serverName);
       const configPath = '/etc/ssh-manager-alerts.json';
@@ -4414,9 +4504,6 @@ registerToolConditional(
     }
   },
   async ({ server: serverName, type, database, outputFile, dbUser, dbPassword, dbHost, dbPort, compress = true, tables }) => {
-    const denied = applyServerPolicy(serverName, 'ssh_db_dump', { type, database, outputFile, tables });
-    if (denied) return denied;
-
     try {
       const ssh = await getConnection(serverName);
 
@@ -4528,9 +4615,6 @@ registerToolConditional(
     }
   },
   async ({ server: serverName, type, database, inputFile, dbUser, dbPassword, dbHost, dbPort, drop = true }) => {
-    const denied = applyServerPolicy(serverName, 'ssh_db_import', { type, database, inputFile, drop });
-    if (denied) return denied;
-
     try {
       const ssh = await getConnection(serverName);
 
@@ -4858,6 +4942,102 @@ registerToolConditional(
   }
 );
 
+// Run a Python script on a remote server as a specific site user.
+// Uploads script content via SFTP to a temp file, chowns to the target user,
+// runs it, then cleans up.
+registerToolConditional(
+  'ssh_python_as_user',
+  {
+    description: 'Run a Python 3 script on a remote server as a specific site user. Handles temp file creation, ownership, sudo execution, and cleanup automatically. Avoids all shell quoting/escaping issues by transferring script content via base64.',
+    inputSchema: {
+      server:    z.string().describe('Server name from configuration'),
+      site_user: z.string().optional().describe('System user to run the script as (defaults to site_user from SSH config, e.g. sparklesmagento, brandonai)'),
+      script:    z.string().describe('Python 3 script content to execute'),
+      cwd:       z.string().optional().describe('Working directory on the remote server (optional)'),
+      timeout:   z.number().optional().describe('Timeout in milliseconds (default: 300000)')
+    }
+  },
+  async ({ server: serverName, site_user, script, cwd, timeout = 300000 }) => {
+    let ssh = null;
+    let localTempDir = null;
+    let remoteTempFile = null;
+
+    try {
+      if (site_user && !isValidUnixUser(site_user)) {
+        throw new Error(`Invalid site_user: ${site_user}`);
+      }
+
+      ssh = await getConnection(serverName);
+
+      const serverConfig = getServerConfig(serverName);
+      const workingDir = cwd || serverConfig?.defaultDir || serverConfig?.default_dir;
+      const executionSiteUser = resolveSiteUser(serverConfig, workingDir, site_user);
+      if (!executionSiteUser) {
+        throw new Error(`Unable to determine site user for server "${serverName}". Provide site_user explicitly or add site_user to SSH config.`);
+      }
+
+      const denied = applyServerPolicy(
+        serverName,
+        'ssh_python_as_user',
+        { command: '[ssh_python_as_user]', cwd: workingDir, run_as: 'site_user', site_user: executionSiteUser },
+        'python3 <uploaded_script>'
+      );
+      if (denied) return denied;
+
+      localTempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'mcp-python-'));
+      const localScriptPath = path.join(localTempDir, 'script.py');
+      fs.writeFileSync(localScriptPath, script, { mode: 0o600 });
+
+      remoteTempFile = `/tmp/mcp_py_${Date.now()}_${Math.random().toString(36).slice(2, 8)}.py`;
+      await ssh.putFile(localScriptPath, remoteTempFile);
+
+      const cdPart = workingDir ? `cd ${shellQuote(workingDir)} && ` : '';
+      const fullCommand = [
+        `chmod 600 ${shellQuote(remoteTempFile)}`,
+        `chown ${shellQuote(`${executionSiteUser}:${executionSiteUser}`)} ${shellQuote(remoteTempFile)}`,
+        `${cdPart}sudo -u ${shellQuote(executionSiteUser)} python3 ${shellQuote(remoteTempFile)}`,
+      ].join(' && ') + `; _ec=$?; rm -f ${shellQuote(remoteTempFile)}; exit $_ec`;
+
+      const startTime = logger.logCommand(serverName, `[ssh_python_as_user] user=${executionSiteUser} script_bytes=${script.length}`, workingDir);
+      const result = await execCommandWithTimeout(ssh, fullCommand, {}, timeout);
+      logger.logCommandResult(serverName, `[ssh_python_as_user] user=${executionSiteUser} script_bytes=${script.length}`, startTime, result);
+      auditOk(serverName, 'ssh_python_as_user', { command: '[ssh_python_as_user]', cwd: workingDir, run_as: 'site_user', site_user: executionSiteUser }, {
+        code: result.code,
+        success: result.code === 0,
+      });
+
+      return {
+        content: [{
+          type: 'text',
+          text: JSON.stringify({
+            server:    serverName,
+            site_user: executionSiteUser,
+            stdout:    result.stdout,
+            stderr:    result.stderr,
+            code:      result.code,
+            success:   result.code === 0
+          }, null, 2)
+        }]
+      };
+    } catch (error) {
+      if (ssh && remoteTempFile) {
+        await execCommandWithTimeout(ssh, `rm -f ${shellQuote(remoteTempFile)}`, {}, 10000).catch(() => {});
+      }
+
+      return {
+        content: [{
+          type: 'text',
+          text: `❌ Error: ${error.message}`
+        }]
+      };
+    } finally {
+      if (localTempDir) {
+        fs.rmSync(localTempDir, { recursive: true, force: true });
+      }
+    }
+  }
+);
+
 // Clean up connections on shutdown
 process.on('SIGINT', async () => {
   console.error('\n🔌 Closing SSH connections...');
@@ -4889,4 +5069,6 @@ async function main() {
   }, 10 * 60 * 1000);
 }
 
-main().catch(console.error);
+if (process.env.MCP_SSH_MANAGER_SKIP_MAIN !== '1') {
+  main().catch(console.error);
+}

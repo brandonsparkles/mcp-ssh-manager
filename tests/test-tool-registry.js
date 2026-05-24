@@ -52,17 +52,19 @@ function assertTrue(condition, message) {
 
 console.log('\n' + YELLOW + 'Running Tool Registry Tests...' + NC + '\n');
 
+const EXPECTED_TOOL_COUNT = 39;
+
 // Test 1: All tools are accounted for
-test('All 37 tools are defined in groups', () => {
+test('All tools are defined in groups', () => {
   const allTools = getAllTools();
-  assertEqual(allTools.length, 37, 'Should have exactly 37 tools');
+  assertEqual(allTools.length, EXPECTED_TOOL_COUNT, `Should have exactly ${EXPECTED_TOOL_COUNT} tools`);
 });
 
 // Test 2: No duplicate tools
 test('No duplicate tools across groups', () => {
   const allTools = getAllTools();
   const uniqueTools = new Set(allTools);
-  assertEqual(uniqueTools.size, 37, 'All 37 tools should be unique');
+  assertEqual(uniqueTools.size, EXPECTED_TOOL_COUNT, `All ${EXPECTED_TOOL_COUNT} tools should be unique`);
 });
 
 // Test 3: Tool group counts are correct
@@ -93,6 +95,7 @@ test('All groups have descriptions', () => {
 // Test 5: findToolGroup works correctly
 test('findToolGroup returns correct group', () => {
   assertEqual(findToolGroup('ssh_execute'), 'core', 'ssh_execute should be in core group');
+  assertEqual(findToolGroup('ssh_python_as_user'), 'core', 'ssh_python_as_user should be in core group');
   assertEqual(findToolGroup('ssh_session_start'), 'sessions', 'ssh_session_start should be in sessions group');
   assertEqual(findToolGroup('ssh_backup_create'), 'backup', 'ssh_backup_create should be in backup group');
   assertEqual(findToolGroup('nonexistent_tool'), null, 'Should return null for unknown tool');
@@ -101,17 +104,18 @@ test('findToolGroup returns correct group', () => {
 // Test 6: getGroupTools returns correct tools
 test('getGroupTools returns correct tools', () => {
   const coreTools = getGroupTools('core');
-  assertEqual(coreTools.length, 5, 'Core group should have 5 tools');
+  assertEqual(coreTools.length, 6, 'Core group should have 6 tools');
   assertTrue(coreTools.includes('ssh_execute'), 'Core should include ssh_execute');
+  assertTrue(coreTools.includes('ssh_python_as_user'), 'Core should include ssh_python_as_user');
 
   const advancedTools = getGroupTools('advanced');
-  assertEqual(advancedTools.length, 14, 'Advanced group should have 14 tools');
+  assertEqual(advancedTools.length, 15, 'Advanced group should have 15 tools');
 });
 
 // Test 7: Core tools are correct
 test('Core group contains expected tools', () => {
   const coreTools = getGroupTools('core');
-  const expectedCore = ['ssh_list_servers', 'ssh_execute', 'ssh_upload', 'ssh_download', 'ssh_sync'];
+  const expectedCore = ['ssh_list_servers', 'ssh_execute', 'ssh_python_as_user', 'ssh_upload', 'ssh_download', 'ssh_sync'];
 
   for (const tool of expectedCore) {
     assertTrue(coreTools.includes(tool), `Core should include ${tool}`);
@@ -130,7 +134,7 @@ test('verifyIntegrity returns valid', () => {
 test('getToolStats returns correct statistics', () => {
   const stats = getToolStats();
   assertEqual(stats.totalGroups, 6, 'Should have 6 groups');
-  assertEqual(stats.totalTools, 37, 'Should have 37 total tools');
+  assertEqual(stats.totalTools, EXPECTED_TOOL_COUNT, `Should have ${EXPECTED_TOOL_COUNT} total tools`);
   assertEqual(stats.groups.length, 6, 'Should have 6 group entries');
 });
 
@@ -153,8 +157,8 @@ test('validateToolRegistry identifies correct tools', () => {
   assertTrue(validation.valid, 'Validation should pass for all tools');
   assertEqual(validation.missing.length, 0, 'Should have no missing tools');
   assertEqual(validation.unexpected.length, 0, 'Should have no unexpected tools');
-  assertEqual(validation.total, 37, 'Should expect 37 tools');
-  assertEqual(validation.registered, 37, 'Should register 37 tools');
+  assertEqual(validation.total, EXPECTED_TOOL_COUNT, `Should expect ${EXPECTED_TOOL_COUNT} tools`);
+  assertEqual(validation.registered, EXPECTED_TOOL_COUNT, `Should register ${EXPECTED_TOOL_COUNT} tools`);
 });
 
 // Test 12: validateToolRegistry catches missing tools
@@ -169,12 +173,12 @@ test('validateToolRegistry detects missing tools', () => {
 
 // Test 13: Specific group sizes
 test('Group sizes match specifications', () => {
-  assertEqual(TOOL_GROUPS.core.length, 5, 'Core should have 5 tools');
+  assertEqual(TOOL_GROUPS.core.length, 6, 'Core should have 6 tools');
   assertEqual(TOOL_GROUPS.sessions.length, 4, 'Sessions should have 4 tools');
   assertEqual(TOOL_GROUPS.monitoring.length, 6, 'Monitoring should have 6 tools');
   assertEqual(TOOL_GROUPS.backup.length, 4, 'Backup should have 4 tools');
   assertEqual(TOOL_GROUPS.database.length, 4, 'Database should have 4 tools');
-  assertEqual(TOOL_GROUPS.advanced.length, 14, 'Advanced should have 14 tools');
+  assertEqual(TOOL_GROUPS.advanced.length, 15, 'Advanced should have 15 tools');
 });
 
 // Summary

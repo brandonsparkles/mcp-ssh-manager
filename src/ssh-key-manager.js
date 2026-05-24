@@ -1,4 +1,4 @@
-import { execSync, spawn } from 'child_process';
+import { execFileSync, spawn } from 'child_process';
 import fs from 'fs';
 import path from 'path';
 import os from 'os';
@@ -24,6 +24,26 @@ function parseKnownHostEntry(line) {
     key: parts[2],
     comment: parts.slice(3).join(' ') || ''
   };
+}
+
+function hostCandidates(host, port = 22) {
+  const normalizedPort = Number(port) || 22;
+  return new Set(
+    normalizedPort === 22
+      ? [host, `[${host}]:22`]
+      : [`[${host}]:${normalizedPort}`]
+  );
+}
+
+function knownHostEntryMatches(entryHost, host, port = 22) {
+  const candidates = hostCandidates(host, port);
+  return entryHost.split(',').some((entry) => candidates.has(entry));
+}
+
+function fingerprintForKey(key) {
+  const keyData = Buffer.from(key, 'base64');
+  const hash = crypto.createHash('sha256').update(keyData).digest('base64');
+  return `SHA256:${hash}`;
 }
 
 /**
@@ -56,13 +76,11 @@ export async function getHostKeyFingerprint(host, port = 22) {
         const entry = parseKnownHostEntry(line);
         if (entry) {
           // Calculate SHA256 fingerprint
-          const keyData = Buffer.from(entry.key, 'base64');
-          const hash = crypto.createHash('sha256').update(keyData).digest('base64');
-
           fingerprints.push({
             host: entry.host,
             type: entry.keyType,
-            fingerprint: `SHA256:${hash}`,
+            key: entry.key,
+            fingerprint: fingerprintForKey(entry.key),
             fullKey: line
           });
         }
@@ -84,11 +102,9 @@ export function isHostKnown(host, port = 22) {
   const content = fs.readFileSync(KNOWN_HOSTS_PATH, 'utf8');
   const lines = content.split('\n');
 
-  // Format host entry as SSH does
-  const hostEntry = port === 22 ? host : `[${host}]:${port}`;
-
   for (const line of lines) {
-    if (line.includes(hostEntry)) {
+    const entry = parseKnownHostEntry(line);
+    if (entry && knownHostEntryMatches(entry.host, host, port)) {
       return true;
     }
   }
@@ -107,24 +123,18 @@ export function getCurrentHostKey(host, port = 22) {
   const content = fs.readFileSync(KNOWN_HOSTS_PATH, 'utf8');
   const lines = content.split('\n');
 
-  // Format host entry as SSH does
-  const hostEntry = port === 22 ? host : `[${host}]:${port}`;
   const keys = [];
 
   for (const line of lines) {
-    if (line.includes(hostEntry)) {
-      const entry = parseKnownHostEntry(line);
-      if (entry) {
-        const keyData = Buffer.from(entry.key, 'base64');
-        const hash = crypto.createHash('sha256').update(keyData).digest('base64');
-
-        keys.push({
-          host: entry.host,
-          type: entry.keyType,
-          fingerprint: `SHA256:${hash}`,
-          fullKey: line
-        });
-      }
+    const entry = parseKnownHostEntry(line);
+    if (entry && knownHostEntryMatches(entry.host, host, port)) {
+      keys.push({
+        host: entry.host,
+        type: entry.keyType,
+        key: entry.key,
+        fingerprint: fingerprintForKey(entry.key),
+        fullKey: line
+      });
     }
   }
 
@@ -138,8 +148,8 @@ export function removeHostKey(host, port = 22) {
   try {
     const hostEntry = port === 22 ? host : `[${host}]:${port}`;
 
-    // Use ssh-keygen to remove the host
-    execSync(`ssh-keygen -R "${hostEntry}"`, { stdio: 'ignore' });
+    // Use ssh-keygen to remove the host without shell interpolation.
+    execFileSync('ssh-keygen', ['-R', hostEntry], { stdio: 'ignore' });
 
     logger.info('Host key removed', { host, port });
     return true;
@@ -270,9 +280,6 @@ export function listKnownHosts() {
           }
         }
 
-        const keyData = Buffer.from(entry.key, 'base64');
-        const hash = crypto.createHash('sha256').update(keyData).digest('base64');
-
         const hostKey = `${host}:${port}`;
         if (!hosts.has(hostKey)) {
           hosts.set(hostKey, {
@@ -284,7 +291,7 @@ export function listKnownHosts() {
 
         hosts.get(hostKey).keys.push({
           type: entry.keyType,
-          fingerprint: `SHA256:${hash}`
+          fingerprint: fingerprintForKey(entry.key)
         });
       }
     }

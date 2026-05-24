@@ -54,6 +54,27 @@ class Logger {
     this.commandHistory = this.loadCommandHistory();
   }
 
+  redactCommand(command) {
+    return String(command || '')
+      .replace(/echo\s+(['"]).*?\1\s*\|\s*sudo\s+-S/gi, 'sudo')
+      .replace(/\b(PGPASSWORD|MYSQL_PWD)=('([^']|'\\'')*'|"[^"]*"|\S+)/gi, '$1=***')
+      .replace(/\s--password(?:=|\s+)('([^']|'\\'')*'|"[^"]*"|\S+)/gi, ' --password=***')
+      .replace(/\s-p('([^']|'\\'')*'|"[^"]*"|\S+)/g, ' -p***')
+      .replace(/\b(password|passphrase|token|secret|api[_-]?key)=('([^']|'\\'')*'|"[^"]*"|\S+)/gi, '$1=***');
+  }
+
+  commandForHistory(command, metadata = {}) {
+    if (metadata.command_shape || metadata.tool) {
+      const parts = [];
+      if (metadata.tool) parts.push(metadata.tool);
+      if (metadata.run_as_mode) parts.push(`run_as=${metadata.run_as_mode}`);
+      if (metadata.execution_user) parts.push(`user=${metadata.execution_user}`);
+      if (metadata.command_shape) parts.push(`shape=${metadata.command_shape}`);
+      return parts.join(' ') || '[command redacted]';
+    }
+    return this.redactCommand(command);
+  }
+
   /**
    * Load command history from file
    */
@@ -72,14 +93,16 @@ class Logger {
   /**
    * Save command to history
    */
-  saveCommandToHistory(command, server, result) {
+  saveCommandToHistory(command, server, result, metadata = {}) {
     const entry = {
       timestamp: new Date().toISOString(),
       server,
-      command,
+      command: this.commandForHistory(command, metadata),
       success: result.success,
       duration: result.duration,
-      error: result.error
+      durationMs: result.durationMs,
+      error: result.error,
+      ...metadata
     };
 
     this.commandHistory.push(entry);
@@ -164,9 +187,10 @@ class Logger {
    * Log SSH command execution
    */
   logCommand(server, command, cwd = null) {
+    const safeCommand = this.redactCommand(command);
     const logData = {
       server,
-      command: this.verbose ? command : command.substring(0, 100) + (command.length > 100 ? '...' : ''),
+      command: this.verbose ? safeCommand : safeCommand.substring(0, 100) + (safeCommand.length > 100 ? '...' : ''),
       cwd
     };
 
@@ -182,17 +206,18 @@ class Logger {
   /**
    * Log SSH command result
    */
-  logCommandResult(server, command, startTime, result) {
+  logCommandResult(server, command, startTime, result, metadata = {}) {
     const duration = Date.now() - startTime;
 
     const resultData = {
       success: !result.code,
       duration: `${duration}ms`,
+      durationMs: duration,
       error: result.code ? result.stderr : undefined
     };
 
     // Save to history
-    this.saveCommandToHistory(command, server, resultData);
+    this.saveCommandToHistory(command, server, resultData, metadata);
 
     if (result.code) {
       this.error(`Command failed on ${server}`, resultData);

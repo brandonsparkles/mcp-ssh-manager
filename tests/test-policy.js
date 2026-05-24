@@ -17,6 +17,9 @@ import {
   VALID_MODES,
   READONLY_BLOCKED_TOOLS,
   COMMAND_BEARING_TOOLS,
+  resolveExecutionPlan,
+  resolveSiteUser,
+  shouldAutoRunAsSiteUser,
   _clearCompiledCache,
 } from '../src/policy.js';
 import { auditLog, _resetWarnedPaths } from '../src/audit.js';
@@ -81,6 +84,11 @@ test('readonly blocks ssh_upload', () => {
 test('readonly blocks ssh_execute_sudo', () => {
   const result = evaluatePolicy({ name: 's', mode: 'readonly' }, 'ssh_execute_sudo', 'whoami');
   assertEqual(result.allowed, false, 'ssh_execute_sudo is in READONLY_BLOCKED_TOOLS');
+});
+
+test('readonly blocks ssh_python_as_user', () => {
+  const result = evaluatePolicy({ name: 's', mode: 'readonly' }, 'ssh_python_as_user', '[ssh_python_as_user]');
+  assertEqual(result.allowed, false, 'ssh_python_as_user can mutate arbitrary files and must be blocked in readonly');
 });
 
 test('readonly allows ssh_execute with a safe command', () => {
@@ -180,6 +188,17 @@ test('restricted: non-command-bearing mutating tool is blocked', () => {
   assertEqual(evaluatePolicy(cfg, 'ssh_upload').allowed, false, 'restricted inherits readonly blocks');
 });
 
+test('restricted blocks ssh_python_as_user by default', () => {
+  _clearCompiledCache();
+  const cfg = {
+    name: 's',
+    mode: 'restricted',
+    allowPatterns: ['^python3 '],
+    denyPatterns: [],
+  };
+  assertEqual(evaluatePolicy(cfg, 'ssh_python_as_user', '[ssh_python_as_user]').allowed, false, 'script content is opaque, so restricted blocks Python-as-user');
+});
+
 test('restricted: read-only tool passes through', () => {
   _clearCompiledCache();
   const cfg = { name: 's', mode: 'restricted', allowPatterns: ['^x'], denyPatterns: [] };
@@ -204,15 +223,125 @@ test('VALID_MODES contains exactly the 3 known modes', () => {
 });
 
 test('READONLY_BLOCKED_TOOLS includes core mutators', () => {
-  for (const t of ['ssh_upload', 'ssh_deploy', 'ssh_sync', 'ssh_execute_sudo', 'ssh_backup_create', 'ssh_db_import']) {
+  for (const t of ['ssh_upload', 'ssh_deploy', 'ssh_sync', 'ssh_python_as_user', 'ssh_execute_sudo', 'ssh_backup_create', 'ssh_db_import']) {
     assertTrue(READONLY_BLOCKED_TOOLS.has(t), `${t} must be in READONLY_BLOCKED_TOOLS`);
   }
 });
 
 test('COMMAND_BEARING_TOOLS lists exec-style tools', () => {
-  for (const t of ['ssh_execute', 'ssh_execute_sudo', 'ssh_execute_group', 'ssh_session_send']) {
+  for (const t of ['ssh_execute', 'ssh_execute_advanced', 'ssh_execute_sudo', 'ssh_execute_group', 'ssh_session_send']) {
     assertTrue(COMMAND_BEARING_TOOLS.has(t), `${t} must be in COMMAND_BEARING_TOOLS`);
   }
+});
+
+// ── site-user routing ─────────────────────────────────────────────────────────
+
+test('resolveSiteUser prefers explicit site user then config then path inference', () => {
+  assertEqual(
+    resolveSiteUser({ siteUser: 'configured' }, '/var/www/pathowner/public_html', 'explicit'),
+    'explicit',
+    'explicit site_user wins'
+  );
+  assertEqual(
+    resolveSiteUser({ siteUser: 'configured' }, '/var/www/pathowner/public_html'),
+    'configured',
+    'siteUser config wins over path inference'
+  );
+  assertEqual(
+    resolveSiteUser({ site_user: 'snake' }, '/var/www/pathowner/public_html'),
+    'snake',
+    'site_user config is supported'
+  );
+  assertEqual(
+    resolveSiteUser({}, '/var/www/pathowner/public_html'),
+    'pathowner',
+    'path inference remains a fallback'
+  );
+});
+
+test('shouldAutoRunAsSiteUser routes non-admin commands under /var/www to site user', () => {
+  assertEqual(shouldAutoRunAsSiteUser('whoami', '/var/www/brandonai/public_html'), true, 'generic commands route to site user');
+  assertEqual(shouldAutoRunAsSiteUser('php artisan queue:work', '/var/www/brandonai/public_html'), true, 'app commands route to site user');
+  assertEqual(shouldAutoRunAsSiteUser('whoami', '/opt/shared/sparkles-tools'), false, 'non-site paths do not auto-route');
+});
+
+test('shouldAutoRunAsSiteUser keeps admin commands root-routed', () => {
+  for (const command of ['systemctl reload nginx', 'journalctl -u nginx', 'apt update', 'varnishadm status', 'reboot', 'git push origin main']) {
+    assertEqual(shouldAutoRunAsSiteUser(command, '/var/www/brandonai/public_html'), false, `${command} stays root-routed`);
+  }
+});
+
+test('resolveExecutionPlan auto-routes site paths to configured site user', () => {
+  const plan = resolveExecutionPlan({
+    serverName: 'ai',
+    serverConfig: {
+      defaultDir: '/var/www/brandonai/public_html',
+      siteUser: 'brandonai',
+    },
+    command: 'touch storage/test',
+    runAsMode: 'auto',
+  });
+  assertEqual(plan.executionUser, 'brandonai', 'auto uses configured site user');
+  assertEqual(plan.routingReason, 'auto_inferred_site_user', 'routing reason recorded');
+  assertTrue(/sudo -u 'brandonai'/.test(plan.fullCommand), 'command is sudo-wrapped as site user');
+});
+
+test('resolveExecutionPlan keeps admin commands root-routed in auto mode', () => {
+  const plan = resolveExecutionPlan({
+    serverName: 'ai',
+    serverConfig: {
+      defaultDir: '/var/www/brandonai/public_html',
+      siteUser: 'brandonai',
+    },
+    command: 'systemctl reload php8.5-fpm',
+    runAsMode: 'auto',
+  });
+  assertEqual(plan.executionUser, 'root', 'admin command stays root');
+  assertEqual(plan.routingReason, 'auto_root_fallback', 'root fallback reason recorded');
+});
+
+test('resolveExecutionPlan keeps git push root-routed in auto mode', () => {
+  const plan = resolveExecutionPlan({
+    serverName: 'magento',
+    serverConfig: {
+      defaultDir: '/var/www/sparklesmagento/public_html',
+      siteUser: 'sparklesmagento',
+    },
+    command: 'git push origin main',
+    runAsMode: 'auto',
+  });
+  assertEqual(plan.executionUser, 'root', 'git push uses root-keyed Git access');
+  assertEqual(plan.routingReason, 'auto_root_fallback', 'root fallback reason recorded');
+});
+
+test('resolveExecutionPlan blocks root app commands unless explicitly overridden', () => {
+  let refused = false;
+  try {
+    resolveExecutionPlan({
+      serverName: 'ai',
+      serverConfig: {
+        defaultDir: '/var/www/brandonai/public_html',
+        siteUser: 'brandonai',
+      },
+      command: 'touch storage/test',
+      runAsMode: 'root',
+    });
+  } catch (error) {
+    refused = /Refusing root execution/.test(error.message);
+  }
+  assertEqual(refused, true, 'root app command is refused without override');
+
+  const plan = resolveExecutionPlan({
+    serverName: 'ai',
+    serverConfig: {
+      defaultDir: '/var/www/brandonai/public_html',
+      siteUser: 'brandonai',
+    },
+    command: 'touch storage/test',
+    runAsMode: 'root',
+    allowRootAppCommands: true,
+  });
+  assertEqual(plan.executionUser, 'root', 'override permits root');
 });
 
 // ── audit log ──────────────────────────────────────────────────────────────────

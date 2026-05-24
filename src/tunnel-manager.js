@@ -131,7 +131,10 @@ class SSHTunnel {
         });
 
         // Handle disconnection
+        let cleaned = false;
         const cleanup = () => {
+          if (cleaned) return;
+          cleaned = true;
           this.stats.connectionsActive--;
           this.connections.delete(localSocket);
           localSocket.destroy();
@@ -182,7 +185,7 @@ class SSHTunnel {
     });
 
     // Handle incoming connections from remote
-    this.ssh.on('tcp connection', (info, accept, reject) => {
+    this.ssh.on('tcp connection', (info, accept) => {
       if (info.destPort !== remotePort) return;
 
       this.stats.connectionsTotal++;
@@ -190,6 +193,7 @@ class SSHTunnel {
       this.lastActivity = new Date();
 
       const remoteSocket = accept();
+      this.connections.add(remoteSocket);
 
       // Connect to local service
       const localSocket = net.connect(localPort, localHost, () => {
@@ -209,8 +213,12 @@ class SSHTunnel {
       });
 
       // Handle errors and cleanup
+      let cleaned = false;
       const cleanup = () => {
+        if (cleaned) return;
+        cleaned = true;
         this.stats.connectionsActive--;
+        this.connections.delete(remoteSocket);
         remoteSocket.destroy();
         localSocket.destroy();
       };
@@ -323,18 +331,35 @@ class SSHTunnel {
       });
 
       // Cleanup on disconnect
-      localSocket.on('close', () => {
+      let cleaned = false;
+      const cleanup = () => {
+        if (cleaned) return;
+        cleaned = true;
         this.stats.connectionsActive--;
         this.connections.delete(localSocket);
         if (stream) stream.destroy();
-      });
+      };
+
+      localSocket.on('close', cleanup);
 
       localSocket.on('error', () => {
         this.stats.errors++;
-        this.stats.connectionsActive--;
-        this.connections.delete(localSocket);
-        if (stream) stream.destroy();
+        cleanup();
       });
+      localSocket.on('error', () => {
+        if (this.state === TUNNEL_STATES.ACTIVE) {
+          this.state = TUNNEL_STATES.FAILED;
+        }
+      });
+      if (stream) {
+        stream.on('error', () => {
+          this.stats.errors++;
+          cleanup();
+          if (this.state === TUNNEL_STATES.ACTIVE) {
+            this.state = TUNNEL_STATES.FAILED;
+          }
+        });
+      }
     });
 
     // Start listening
@@ -497,7 +522,7 @@ export function getTunnel(tunnelId) {
 export function listTunnels(serverName = null) {
   const activeTunnels = [];
 
-  for (const [id, tunnel] of tunnels.entries()) {
+  for (const tunnel of tunnels.values()) {
     if (tunnel.state !== TUNNEL_STATES.CLOSED) {
       if (!serverName || tunnel.serverName === serverName) {
         activeTunnels.push(tunnel.getInfo());
@@ -528,7 +553,7 @@ export function closeTunnel(tunnelId) {
 export function closeServerTunnels(serverName) {
   let closedCount = 0;
 
-  for (const [id, tunnel] of tunnels.entries()) {
+  for (const tunnel of tunnels.values()) {
     if (tunnel.serverName === serverName) {
       tunnel.close();
       closedCount++;
@@ -546,6 +571,11 @@ export function monitorTunnels() {
   const healthTimeout = 60 * 1000; // 1 minute
 
   for (const [id, tunnel] of tunnels.entries()) {
+    if (tunnel.state === TUNNEL_STATES.FAILED) {
+      tunnel.reconnect();
+      continue;
+    }
+
     if (tunnel.state === TUNNEL_STATES.ACTIVE) {
       const idle = now - tunnel.lastActivity.getTime();
 
@@ -554,10 +584,6 @@ export function monitorTunnels() {
         logger.debug(`Tunnel ${id} idle for ${idle}ms`);
       }
 
-      // Auto-reconnect failed tunnels
-      if (tunnel.state === TUNNEL_STATES.FAILED) {
-        tunnel.reconnect();
-      }
     }
   }
 }

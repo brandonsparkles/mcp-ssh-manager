@@ -132,83 +132,134 @@ class SSHManager {
       throw new Error('Not connected to SSH server');
     }
 
-    const { timeout = 30000, cwd, rawCommand = false } = options;
+    const {
+      timeout = 30000,
+      cwd,
+      rawCommand = false,
+      // Quiet window (ms) to keep draining buffered output after the
+      // foreground command has exited. See the 'exit' handler below.
+      backgroundDrainMs = 250,
+    } = options;
     const fullCommand = (cwd && !rawCommand) ? `cd ${shellQuote(cwd)} && ${command}` : command;
 
     return new Promise((resolve, reject) => {
       let stdout = '';
       let stderr = '';
       let completed = false;
+      let exited = false;
       let stream = null;
       let timeoutId = null;
+      let drainId = null;
+      let exitCode = null;
+      let exitSignal = null;
 
-      // Setup timeout first
+      const clearTimers = () => {
+        if (timeoutId) { clearTimeout(timeoutId); timeoutId = null; }
+        if (drainId) { clearTimeout(drainId); drainId = null; }
+      };
+
+      const finish = () => {
+        if (completed) return;
+        completed = true;
+        clearTimers();
+        // The channel may still be open here when a backgrounded/detached
+        // child is holding the stdio fds; stop accumulating its output so a
+        // lingering channel can't grow these buffers unbounded.
+        if (stream) {
+          try { stream.removeAllListeners('data'); } catch (e) { /* ignore */ }
+          try { stream.stderr.removeAllListeners('data'); } catch (e) { /* ignore */ }
+        }
+        resolve({ stdout, stderr, code: exitCode || 0, signal: exitSignal });
+      };
+
+      const fail = (err) => {
+        if (completed) return;
+        completed = true;
+        clearTimers();
+        reject(err);
+      };
+
+      // After the foreground command has exited, (re)arm a short quiet-window
+      // timer. Each subsequent chunk of buffered output pushes it back, so we
+      // capture trailing output but resolve once the stream goes quiet — we do
+      // NOT wait for channel 'close', which a detached child (`cmd &`, setsid,
+      // nohup) keeps open for its whole lifetime.
+      const bumpDrain = () => {
+        if (!exited || completed) return;
+        if (drainId) clearTimeout(drainId);
+        drainId = setTimeout(finish, Math.max(0, backgroundDrainMs));
+      };
+
+      // Hard timeout: only trips when the foreground command never exits.
       if (timeout > 0) {
         timeoutId = setTimeout(() => {
-          if (!completed) {
-            completed = true;
+          if (completed) return;
 
-            // Try multiple ways to kill the stream
-            if (stream) {
-              try {
-                stream.write('\x03'); // Send Ctrl+C
-                stream.end();
-                stream.destroy();
-              } catch (e) {
-                // Ignore errors
-              }
-            }
-
-            // Kill the entire client connection as last resort
+          // Try multiple ways to kill the stream
+          if (stream) {
             try {
-              this.client.end();
-              this.connected = false;
+              stream.write('\x03'); // Send Ctrl+C
+              stream.end();
+              stream.destroy();
             } catch (e) {
               // Ignore errors
             }
-
-            reject(new Error(`Command timeout after ${timeout}ms: ${command.substring(0, 100)}...`));
           }
+
+          // Kill the entire client connection as last resort
+          try {
+            this.client.end();
+            this.connected = false;
+          } catch (e) {
+            // Ignore errors
+          }
+
+          fail(new Error(`Command timeout after ${timeout}ms: ${command.substring(0, 100)}...`));
         }, timeout);
       }
 
       this.client.exec(fullCommand, (err, streamObj) => {
         if (err) {
-          completed = true;
-          if (timeoutId) clearTimeout(timeoutId);
-          reject(err);
+          fail(err);
           return;
         }
 
         stream = streamObj;
 
-        stream.on('close', (code, signal) => {
-          if (!completed) {
-            completed = true;
-            if (timeoutId) clearTimeout(timeoutId);
-            resolve({
-              stdout,
-              stderr,
-              code: code || 0,
-              signal
-            });
+        // 'exit' carries the foreground command's status and fires before
+        // 'close'. ssh2 calls it as (code) for normal exits, or
+        // (null, signalName, ...) for signal terminations.
+        stream.on('exit', (code, signalName) => {
+          if (typeof code === 'number') {
+            exitCode = code;
+          } else if (signalName) {
+            exitSignal = signalName;
           }
+          exited = true;
+          bumpDrain();
+        });
+
+        // 'close' (channel fully closed) is the fast path for ordinary
+        // commands: it fires right after 'exit', so we resolve immediately
+        // and the drain timer never actually elapses.
+        stream.on('close', (code, signal) => {
+          if (typeof code === 'number') exitCode = code;
+          if (signal) exitSignal = signal;
+          finish();
         });
 
         stream.on('data', (data) => {
           stdout += data.toString();
+          bumpDrain();
         });
 
         stream.stderr.on('data', (data) => {
           stderr += data.toString();
+          bumpDrain();
         });
 
         stream.on('error', (err) => {
-          if (!completed) {
-            completed = true;
-            if (timeoutId) clearTimeout(timeoutId);
-            reject(err);
-          }
+          fail(err);
         });
       });
     });

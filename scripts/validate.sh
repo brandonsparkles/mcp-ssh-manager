@@ -11,7 +11,7 @@ ERRORS=0
 
 # Check JavaScript syntax
 echo "📋 Checking JavaScript syntax..."
-if node --check src/index.js 2>/dev/null; then
+if node --check src/index.js; then
     echo "  ✅ JavaScript syntax is valid"
 else
     echo "  ❌ JavaScript syntax error!"

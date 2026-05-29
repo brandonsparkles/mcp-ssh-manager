@@ -29,15 +29,17 @@ const REDACT_FIELDS = new Set([
 
 const REDACTED = '***';
 
-function sanitize(value) {
+function sanitize(value, seen = new WeakSet()) {
   if (value === null || typeof value !== 'object') return value;
-  if (Array.isArray(value)) return value.map(sanitize);
+  if (seen.has(value)) return '[Circular]';
+  seen.add(value);
+  if (Array.isArray(value)) return value.map((v) => sanitize(v, seen));
   const out = {};
   for (const [k, v] of Object.entries(value)) {
     if (REDACT_FIELDS.has(k.toLowerCase())) {
       out[k] = REDACTED;
     } else {
-      out[k] = sanitize(v);
+      out[k] = sanitize(v, seen);
     }
   }
   return out;

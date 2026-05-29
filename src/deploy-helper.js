@@ -147,6 +147,12 @@ export function detectDeploymentNeeds(remotePath) {
     needs.sudo = true;
     needs.suggestedOwner = 'www-data:www-data';
     needs.suggestedPerms = '644';
+  } else if (remotePath.startsWith('/var/') || remotePath.startsWith('/usr/')) {
+    // Other system paths under /var/ or /usr/ also require sudo, matching
+    // buildDeploymentStrategy's needsSudo check (which flags all /var/ and /usr/).
+    needs.sudo = true;
+    needs.suggestedOwner = 'root:root';
+    needs.suggestedPerms = '644';
   } else if (remotePath.includes('/nginx/')) {
     needs.sudo = true;
     needs.suggestedOwner = 'root:root';
@@ -175,6 +181,17 @@ export function createBatchDeployScript(deployments) {
   script.push(`# Generated at ${new Date().toISOString()}`);
   script.push('');
 
+  // Cleanup all temp files via an EXIT trap so they are removed even when
+  // `set -e` aborts the script early on a failed deployment step.
+  const tempFiles = deployments
+    .map(deploy => shellQuote(deploy.tempFile))
+    .join(' ');
+  if (tempFiles) {
+    script.push('# Remove temporary files on any exit (success or failure)');
+    script.push(`trap 'rm -f ${tempFiles}' EXIT`);
+    script.push('');
+  }
+
   deployments.forEach((deploy, index) => {
     script.push(`# File ${index + 1}: ${deploy.localPath} -> ${deploy.remotePath}`);
     deploy.strategy.steps.forEach(step => {
@@ -183,12 +200,6 @@ export function createBatchDeployScript(deployments) {
       }
     });
     script.push('');
-  });
-
-  // Cleanup all temp files at the end
-  script.push('# Cleanup temporary files');
-  deployments.forEach(deploy => {
-    script.push(`rm -f ${shellQuote(deploy.tempFile)}`);
   });
 
   return script.join('\n');

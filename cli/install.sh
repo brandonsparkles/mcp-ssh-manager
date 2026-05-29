@@ -66,8 +66,13 @@ echo -e "${YELLOW}Installing ssh-manager...${NC}"
 # Copy entire CLI directory to home
 CLI_HOME="$HOME/.ssh-manager-cli"
 echo "Copying CLI files to $CLI_HOME..."
+# Copy into a staging dir first, then swap, so a failed copy leaves the
+# existing installation intact (set -e aborts before the swap on cp failure).
+CLI_HOME_NEW="${CLI_HOME}.new.$$"
+rm -rf "$CLI_HOME_NEW"
+cp -r "$SCRIPT_DIR" "$CLI_HOME_NEW"
 rm -rf "$CLI_HOME"
-cp -r "$SCRIPT_DIR" "$CLI_HOME"
+mv "$CLI_HOME_NEW" "$CLI_HOME"
 
 # Create executable symlink
 $SUDO ln -sf "$CLI_HOME/ssh-manager" "$INSTALL_DIR/ssh-manager"
@@ -76,7 +81,9 @@ $SUDO ln -sf "$CLI_HOME/ssh-manager" "$INSTALL_DIR/ssh-manager"
 chmod +x "$CLI_HOME/ssh-manager"
 
 # Verify installation
-if command -v ssh-manager >/dev/null 2>&1; then
+# Check the installed file directly; relying on `command -v` gives a false
+# failure in non-interactive shells where INSTALL_DIR is not on PATH.
+if [ -x "$INSTALL_DIR/ssh-manager" ]; then
     echo
     echo -e "${GREEN}✅ Installation successful!${NC}"
     echo

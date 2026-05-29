@@ -67,11 +67,16 @@ export function buildMySQLDumpCommand(options) {
     compress = true
   } = options;
 
-  let command = 'mysqldump';
+  // Pass the password via the MYSQL_PWD environment variable instead of
+  // --password=... so it never appears in mysqldump's process argv (`ps`).
+  let command = '';
+  if (password) {
+    command = `MYSQL_PWD=${shellQuote(password)} `;
+  }
+  command += 'mysqldump';
 
   // Connection parameters
   if (user) command += ` -u ${shellQuote(user)}`;
-  if (password) command += ` --password=${shellQuote(password)}`;
   if (host) command += ` -h ${shellQuote(host)}`;
   if (port) command += ` -P ${shellQuote(port)}`;
 
@@ -415,7 +420,10 @@ export function parseBackupsList(output) {
   }
 
   const backups = [];
-  const metadataBlocks = output.split('---').filter(b => b.trim());
+  // The list command emits each metadata file followed by a delimiter line
+  // containing exactly `---` (echo "---"). Split on that standalone line only,
+  // so a `---` substring inside a JSON metadata value does not split a block.
+  const metadataBlocks = output.split(/^---$/m).filter(b => b.trim());
 
   for (const block of metadataBlocks) {
     try {
@@ -442,6 +450,18 @@ export function buildCleanupCommand(backupDir = DEFAULT_BACKUP_DIR, retentionDay
  * Build cron schedule command
  */
 export function buildCronScheduleCommand(schedule, backupCommand, cronComment) {
+  // Reject newlines/carriage returns: an embedded newline in any field would
+  // smuggle additional crontab entries past printf (cron injection), since
+  // shellQuote preserves newlines literally.
+  for (const [field, value] of [
+    ['schedule', schedule],
+    ['backupCommand', backupCommand],
+    ['cronComment', cronComment]
+  ]) {
+    if (value != null && /[\r\n]/.test(String(value))) {
+      throw new Error(`cron ${field} must not contain newline characters`);
+    }
+  }
   // Add cron job with comment
   const cronLine = `${schedule} ${backupCommand} # ${cronComment}`;
   return `(crontab -l 2>/dev/null; printf '%s\\n' ${shellQuote(cronLine)}) | crontab -`;

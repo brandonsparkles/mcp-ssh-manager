@@ -78,8 +78,16 @@ class ServerGroups {
         }
       }
 
-      fs.writeFileSync(GROUPS_FILE, JSON.stringify(groupsToSave, null, 2));
-      logger.info('Server groups saved', { count: Object.keys(groupsToSave).length });
+      // Fire-and-forget async write so mutations don't block the event loop.
+      // saveGroups() callers ignore the return value; persistence errors are logged.
+      fs.promises
+        .writeFile(GROUPS_FILE, JSON.stringify(groupsToSave, null, 2))
+        .then(() => {
+          logger.info('Server groups saved', { count: Object.keys(groupsToSave).length });
+        })
+        .catch((error) => {
+          logger.error('Failed to save server groups', { error: error.message });
+        });
       return true;
     } catch (error) {
       logger.error('Failed to save server groups', { error: error.message });
@@ -239,6 +247,7 @@ class ServerGroups {
 
     // Add servers (avoid duplicates)
     const currentServers = new Set(group.servers);
+    const beforeCount = currentServers.size;
     servers.forEach(server => currentServers.add(server.toLowerCase()));
     group.servers = Array.from(currentServers);
 
@@ -246,7 +255,7 @@ class ServerGroups {
 
     logger.info('Servers added to group', {
       group: groupName,
-      added: servers.length,
+      added: currentServers.size - beforeCount,
       total: group.servers.length
     });
 
@@ -290,15 +299,16 @@ class ServerGroups {
     const groups = [];
 
     for (const [name, group] of Object.entries(this.groups)) {
-      // Populate dynamic groups
-      if (group.dynamic && name === 'all') {
-        group.servers = this.getAllServers();
-      }
+      // Populate dynamic groups without mutating the stored object
+      const servers = (group.dynamic && name === 'all')
+        ? this.getAllServers()
+        : group.servers;
 
       groups.push({
         name,
         ...group,
-        serverCount: group.servers.length
+        servers,
+        serverCount: servers.length
       });
     }
 

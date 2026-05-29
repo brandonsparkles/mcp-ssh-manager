@@ -56,7 +56,12 @@ export function saveCommandAliases(aliases) {
       }
     }
 
-    fs.writeFileSync(ALIASES_FILE, JSON.stringify(customAliases, null, 2));
+    // Write atomically: write to a temp file beside the target, then rename.
+    // renameSync is atomic on the same filesystem, so a crash mid-write cannot
+    // leave the aliases file truncated or corrupted.
+    const tmpFile = ALIASES_FILE + '.tmp';
+    fs.writeFileSync(tmpFile, JSON.stringify(customAliases, null, 2));
+    fs.renameSync(tmpFile, ALIASES_FILE);
     return true;
   } catch (error) {
     console.error(`Error saving command aliases: ${error.message}`);

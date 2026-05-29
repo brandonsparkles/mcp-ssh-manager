@@ -14,13 +14,13 @@ key_path = "~/.ssh/id_rsa"           # Path to SSH private key
 port = 22                             # Optional, defaults to 22
 default_dir = "/var/www/html"         # Optional, default working directory
 description = "Production web server" # Optional description
-sudo_password = "sudo_pass"           # Optional, for automated deployments
+sudo_password = "CHANGE_ME_SUDO_PASSWORD"  # Optional, for automated deployments
 
 # Staging Server Example (using password authentication)
 [ssh_servers.staging]
 host = "staging.example.com"
 user = "deploy"
-password = "secure_password"          # Use SSH keys instead when possible
+password = "CHANGE_ME_PASSWORD"       # Use SSH keys instead when possible
 port = 2222                           # Custom SSH port
 default_dir = "/home/deploy/app"
 description = "Staging environment"

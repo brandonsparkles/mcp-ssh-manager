@@ -15,7 +15,7 @@ from pathlib import Path
 # Add parent directory to path to import tools
 sys.path.insert(0, str(Path(__file__).parent.parent / 'tools'))
 
-from server_manager import load_env_config, test_server_connection
+from server_manager import load_env_config
 
 def create_deployment_config(server_name, files, options=None):
     """

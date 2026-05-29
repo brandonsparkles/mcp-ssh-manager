@@ -198,16 +198,17 @@ export function createProfile(name, config) {
  */
 export function mergeProfiles(baseProfileName, extensions) {
   const baseProfile = loadProfile(baseProfileName);
+  const ext = extensions || {};
 
   return {
     ...baseProfile,
     commandAliases: {
       ...baseProfile.commandAliases,
-      ...extensions.commandAliases
+      ...ext.commandAliases
     },
     hooks: {
       ...baseProfile.hooks,
-      ...extensions.hooks
+      ...ext.hooks
     }
   };
 }

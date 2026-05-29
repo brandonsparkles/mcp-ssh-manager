@@ -1,5 +1,7 @@
 #!/bin/bash
 
+set -euo pipefail
+
 echo "🔧 Setting up Git hooks for code quality..."
 echo "=========================================="
 echo ""
@@ -18,7 +20,7 @@ fi
 
 # Install pre-commit
 echo "📦 Installing pre-commit..."
-pip install pre-commit
+pip3 install pre-commit
 
 # Install Node.js dev dependencies
 echo "📦 Installing Node.js linting tools..."
@@ -26,7 +28,7 @@ npm install --save-dev eslint prettier
 
 # Install Python linting tools
 echo "📦 Installing Python linting tools..."
-pip install black flake8 isort
+pip3 install black flake8 isort
 
 # Install pre-commit hooks
 echo "🔗 Installing git hooks..."
@@ -34,7 +36,7 @@ pre-commit install
 
 # Create secrets baseline
 echo "🔐 Creating secrets baseline..."
-pip install detect-secrets
+pip3 install detect-secrets
 detect-secrets scan > .secrets.baseline
 
 # Run hooks on all files (optional first run)

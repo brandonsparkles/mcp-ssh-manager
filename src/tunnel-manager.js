@@ -158,9 +158,11 @@ class SSHTunnel {
 
     // Start listening
     await new Promise((resolve, reject) => {
-      this.server.listen(localPort, localHost, (err) => {
-        if (err) reject(err);
-        else resolve();
+      const onError = (err) => reject(err);
+      this.server.once('error', onError);
+      this.server.listen(localPort, localHost, () => {
+        this.server.removeListener('error', onError);
+        resolve();
       });
     });
 
@@ -224,6 +226,15 @@ class SSHTunnel {
       };
 
       localSocket.on('error', (err) => {
+        this.stats.errors++;
+        logger.error('Remote forwarding error', {
+          tunnel: this.id,
+          error: err.message
+        });
+        cleanup();
+      });
+
+      remoteSocket.on('error', (err) => {
         this.stats.errors++;
         logger.error('Remote forwarding error', {
           tunnel: this.id,
@@ -312,6 +323,14 @@ class SSHTunnel {
                   this.lastActivity = new Date();
                 });
 
+                stream.on('error', () => {
+                  this.stats.errors++;
+                  cleanup();
+                  if (this.state === TUNNEL_STATES.ACTIVE) {
+                    this.state = TUNNEL_STATES.FAILED;
+                  }
+                });
+
               } catch (error) {
                 // Send error response
                 const response = Buffer.from([
@@ -351,22 +370,15 @@ class SSHTunnel {
           this.state = TUNNEL_STATES.FAILED;
         }
       });
-      if (stream) {
-        stream.on('error', () => {
-          this.stats.errors++;
-          cleanup();
-          if (this.state === TUNNEL_STATES.ACTIVE) {
-            this.state = TUNNEL_STATES.FAILED;
-          }
-        });
-      }
     });
 
     // Start listening
     await new Promise((resolve, reject) => {
-      this.server.listen(localPort, localHost, (err) => {
-        if (err) reject(err);
-        else resolve();
+      const onError = (err) => reject(err);
+      this.server.once('error', onError);
+      this.server.listen(localPort, localHost, () => {
+        this.server.removeListener('error', onError);
+        resolve();
       });
     });
 
@@ -453,7 +465,13 @@ class SSHTunnel {
 
       // Retry with exponential backoff
       const delay = Math.min(1000 * Math.pow(2, this.reconnectAttempts), 30000);
-      setTimeout(() => this.reconnect(), delay);
+      setTimeout(() => {
+        this.reconnect().catch((reconnectError) => {
+          logger.error(`Scheduled reconnect failed for tunnel ${this.id}`, {
+            error: reconnectError.message
+          });
+        });
+      }, delay);
 
       return false;
     }
@@ -589,7 +607,19 @@ export function monitorTunnels() {
 }
 
 // Monitor tunnels periodically
-setInterval(monitorTunnels, 30 * 1000); // Every 30 seconds
+let monitorInterval = setInterval(monitorTunnels, 30 * 1000); // Every 30 seconds
+// Don't let the monitor keep the process alive on its own.
+if (monitorInterval.unref) monitorInterval.unref();
+
+/**
+ * Stop the periodic tunnel monitor (shutdown path).
+ */
+export function stopMonitoring() {
+  if (monitorInterval) {
+    clearInterval(monitorInterval);
+    monitorInterval = null;
+  }
+}
 
 export default {
   createTunnel,
@@ -597,6 +627,7 @@ export default {
   listTunnels,
   closeTunnel,
   closeServerTunnels,
+  stopMonitoring,
   TUNNEL_TYPES,
   TUNNEL_STATES
 };

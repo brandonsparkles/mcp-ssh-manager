@@ -159,21 +159,24 @@ fi
 # Step 10: Run tests (optional)
 if [ "$1" == "--test" ]; then
     echo -e "${YELLOW}Step 10: Running tests...${NC}"
-    
+
+    # --test is a standalone mode, so the install step never ran and
+    # $TARGET_DIR may be empty/stale. Test against the freshly-built
+    # $TEMP_BUILD instead, which Step 4 guarantees is populated.
     # Test help command
-    if "$TARGET_DIR/ssh-manager" --help >/dev/null 2>&1; then
+    if "$TEMP_BUILD/ssh-manager" --help >/dev/null 2>&1; then
         print_status "Help command works"
     else
         print_error "Help command failed"
     fi
-    
+
     # Test version command
-    if "$TARGET_DIR/ssh-manager" --version >/dev/null 2>&1; then
+    if "$TEMP_BUILD/ssh-manager" --version >/dev/null 2>&1; then
         print_status "Version command works"
     else
         print_error "Version command failed"
     fi
-    
+
     echo
 fi
 

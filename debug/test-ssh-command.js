@@ -17,17 +17,27 @@ const server = spawn('node', [serverPath], {
 
 let requestId = 0;
 
-// Handle server output
+// Handle server output. Messages are newline-delimited JSON, so buffer raw
+// chunks and only parse complete lines — a single chunk may contain a partial
+// frame or several frames concatenated together.
+let stdoutBuffer = '';
 server.stdout.on('data', (data) => {
-  try {
-    const response = JSON.parse(data.toString());
-    if (response.result) {
-      console.log('✅ Response:', JSON.stringify(response.result, null, 2));
-    } else if (response.error) {
-      console.log('❌ Error:', response.error.message);
+  stdoutBuffer += data.toString();
+  let newlineIndex;
+  while ((newlineIndex = stdoutBuffer.indexOf('\n')) !== -1) {
+    const line = stdoutBuffer.slice(0, newlineIndex);
+    stdoutBuffer = stdoutBuffer.slice(newlineIndex + 1);
+    if (!line.trim()) continue;
+    try {
+      const response = JSON.parse(line);
+      if (response.result) {
+        console.log('✅ Response:', JSON.stringify(response.result, null, 2));
+      } else if (response.error) {
+        console.log('❌ Error:', response.error.message);
+      }
+    } catch (e) {
+      // Ignore non-JSON output
     }
-  } catch (e) {
-    // Ignore non-JSON output
   }
 });
 

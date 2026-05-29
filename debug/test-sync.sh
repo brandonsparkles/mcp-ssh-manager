@@ -6,21 +6,21 @@ echo ""
 
 # Create test directory structure
 TEST_DIR="/tmp/mcp-sync-test"
-rm -rf $TEST_DIR
-mkdir -p $TEST_DIR/source
-mkdir -p $TEST_DIR/dest
+rm -rf "$TEST_DIR"
+mkdir -p "$TEST_DIR/source"
+mkdir -p "$TEST_DIR/dest"
 
 # Create test files
-echo "File 1 content" > $TEST_DIR/source/file1.txt
-echo "File 2 content" > $TEST_DIR/source/file2.txt
-echo "Config file" > $TEST_DIR/source/config.json
-mkdir -p $TEST_DIR/source/subdir
-echo "Nested file" > $TEST_DIR/source/subdir/nested.txt
-echo "Should be excluded" > $TEST_DIR/source/temp.log
-echo "Also excluded" > $TEST_DIR/source/cache.tmp
+echo "File 1 content" > "$TEST_DIR/source/file1.txt"
+echo "File 2 content" > "$TEST_DIR/source/file2.txt"
+echo "Config file" > "$TEST_DIR/source/config.json"
+mkdir -p "$TEST_DIR/source/subdir"
+echo "Nested file" > "$TEST_DIR/source/subdir/nested.txt"
+echo "Should be excluded" > "$TEST_DIR/source/temp.log"
+echo "Also excluded" > "$TEST_DIR/source/cache.tmp"
 
 echo "📁 Test directory created:"
-tree $TEST_DIR 2>/dev/null || ls -la $TEST_DIR/source
+tree "$TEST_DIR" 2>/dev/null || ls -la "$TEST_DIR/source"
 
 echo ""
 echo "Test scenarios:"

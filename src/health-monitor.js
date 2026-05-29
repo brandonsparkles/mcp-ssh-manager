@@ -25,6 +25,14 @@ export const COMMON_SERVICES = {
   ssh: { systemd: 'sshd', sysv: 'ssh' }
 };
 
+// Wrap a value in single quotes for safe interpolation into a POSIX shell
+// command, escaping any embedded single quotes. Matches the helper used in
+// ssh-manager.js / database-manager.js.
+function shellQuote(value) {
+  const quote = "'";
+  return quote + String(value).replace(/'/g, quote + '\\' + quote + quote) + quote;
+}
+
 /**
  * Build command to check CPU usage
  */
@@ -169,17 +177,19 @@ export function determineOverallHealth(cpu, memory, disks) {
  * Build command to check service status (systemd or sysv)
  */
 export function buildServiceStatusCommand(serviceName) {
+  // Quote the service name to prevent shell injection from caller-supplied input.
+  const svc = shellQuote(serviceName);
   // Try systemd first, fallback to sysv
   return `
     if command -v systemctl >/dev/null 2>&1; then
-      systemctl is-active ${serviceName} 2>/dev/null >/dev/null && echo "ACTIVE" || echo "INACTIVE"
-      systemctl is-enabled ${serviceName} 2>/dev/null >/dev/null && echo "ENABLED" || echo "DISABLED"
-      systemctl status ${serviceName} 2>/dev/null | grep "Main PID" | awk '{print $3}' | cut -d'(' -f1
-      systemctl status ${serviceName} 2>/dev/null | grep "Active:" | sed 's/.*Active: //' | awk '{print $1,$2,$3}'
+      systemctl is-active ${svc} 2>/dev/null >/dev/null && echo "ACTIVE" || echo "INACTIVE"
+      systemctl is-enabled ${svc} 2>/dev/null >/dev/null && echo "ENABLED" || echo "DISABLED"
+      systemctl status ${svc} 2>/dev/null | grep "Main PID" | awk '{print $3}' | cut -d'(' -f1
+      systemctl status ${svc} 2>/dev/null | grep "Active:" | sed 's/.*Active: //' | awk '{print $1,$2,$3}'
     elif command -v service >/dev/null 2>&1; then
-      service ${serviceName} status >/dev/null 2>&1 && echo "ACTIVE" || echo "INACTIVE"
+      service ${svc} status >/dev/null 2>&1 && echo "ACTIVE" || echo "INACTIVE"
       echo "UNKNOWN"
-      pgrep -f ${serviceName} | head -1 || echo ""
+      pgrep -f ${svc} | head -1 || echo ""
       echo "sysv"
     else
       echo "UNKNOWN"
@@ -221,7 +231,8 @@ export function buildProcessListCommand(options = {}) {
   let command = `ps aux --sort=${sortFlag === '-c' ? '-pcpu' : '-pmem'} | head -n ${limit + 1}`;
 
   if (filter) {
-    command += ` | grep -i "${filter}"`;
+    // Quote the caller-supplied filter to prevent shell injection.
+    command += ` | grep -i ${shellQuote(filter)}`;
   }
 
   // Format output as JSON-like structure
@@ -270,6 +281,10 @@ export function buildKillProcessCommand(pid, signal = 'TERM') {
  * Build command to get process info
  */
 export function buildProcessInfoCommand(pid) {
+  // Validate PID is a positive integer (parity with buildKillProcessCommand).
+  if (!Number.isInteger(pid) || pid <= 0) {
+    throw new Error(`Invalid PID: ${pid}`);
+  }
   return `ps -p ${pid} -o user,pid,pcpu,pmem,vsz,rss,stat,start,time,cmd --no-headers | awk '{printf "{\\"user\\":\\"%s\\",\\"pid\\":%s,\\"cpu\\":%.1f,\\"mem\\":%.1f,\\"vsz\\":%s,\\"rss\\":%s,\\"stat\\":\\"%s\\",\\"start\\":\\"%s\\",\\"time\\":\\"%s\\",\\"command\\":\\"%s\\"}", $1,$2,$3,$4,$5,$6,$7,$8,$9,substr($0,index($0,$10))}'`;
 }
 

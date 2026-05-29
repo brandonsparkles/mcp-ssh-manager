@@ -1,6 +1,8 @@
 #!/bin/bash
 # Migration script from Python to Bash CLI
 
+set -euo pipefail
+
 # Colors
 GREEN='\033[0;32m'
 YELLOW='\033[1;33m'
@@ -39,7 +41,7 @@ if [ -z "$ENV_FILE" ]; then
     done
     echo
     echo "Please specify the path to your .env file:"
-    read -p "Path: " ENV_FILE
+    read -r -p "Path: " ENV_FILE
     
     if [ ! -f "$ENV_FILE" ]; then
         echo -e "${RED}File not found: $ENV_FILE${NC}"
@@ -81,7 +83,7 @@ else
     fi
     
     echo -e "${BLUE}Installing CLI...${NC}"
-    ./install.sh
+    "$SCRIPT_DIR/install.sh"
     
     if command -v ssh-manager >/dev/null 2>&1; then
         echo -e "${GREEN}✅ CLI installed successfully${NC}"

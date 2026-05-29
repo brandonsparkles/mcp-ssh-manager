@@ -90,7 +90,7 @@ set_config() {
     
     if command -v jq >/dev/null 2>&1; then
         local temp=$(mktemp)
-        jq ".$key = \"$value\"" "$SSH_MANAGER_CONFIG" > "$temp" && mv "$temp" "$SSH_MANAGER_CONFIG"
+        jq --arg val "$value" ".$key = \$val" "$SSH_MANAGER_CONFIG" > "$temp" && mv "$temp" "$SSH_MANAGER_CONFIG"
         print_success "Updated config: $key = $value"
     else
         print_error "jq is required for config management"
@@ -290,9 +290,9 @@ remove_server_from_env() {
     # Backup .env file
     cp "$SSH_MANAGER_ENV" "$SSH_MANAGER_ENV.bak"
     
-    # Remove all lines for this server
+    # Remove all lines for this server, including the leading "# Server: <name>" comment
     local temp=$(mktemp)
-    grep -v "^SSH_SERVER_${name_upper}_" "$SSH_MANAGER_ENV" > "$temp"
+    sed "/^# Server: $name$/d; /^SSH_SERVER_${name_upper}_/d" "$SSH_MANAGER_ENV" > "$temp"
     mv "$temp" "$SSH_MANAGER_ENV"
     
     print_success "Server '$name' removed successfully"
@@ -316,18 +316,20 @@ test_ssh_connection() {
 
     print_info "Testing connection to $server ($user@$host:$port)..."
 
-    local ssh_opts="-o ConnectTimeout=10 -o StrictHostKeyChecking=yes"
+    local ssh_opts=(-o ConnectTimeout=10 -o StrictHostKeyChecking=yes)
     local ssh_output=$(mktemp)
     local ssh_status
 
     if [ -n "$keypath" ]; then
-        ssh_opts="$ssh_opts -i $keypath"
+        ssh_opts+=(-i "$keypath")
     fi
 
     if [ -n "$password" ]; then
         # Use sshpass if available
         if command -v sshpass >/dev/null 2>&1; then
-            sshpass -p "$password" ssh $ssh_opts -p "$port" "$user@$host" "echo 'Connection successful'" > "$ssh_output" 2>&1
+            # Pass the password via the SSHPASS env var (sshpass -e) instead of
+            # -p so it is not exposed in the process listing.
+            SSHPASS="$password" sshpass -e ssh "${ssh_opts[@]}" -p "$port" "$user@$host" "echo 'Connection successful'" > "$ssh_output" 2>&1
             ssh_status=$?
         else
             print_warning "sshpass not installed, cannot test password authentication"
@@ -335,7 +337,7 @@ test_ssh_connection() {
             return 1
         fi
     else
-        ssh $ssh_opts -p "$port" "$user@$host" "echo 'Connection successful'" > "$ssh_output" 2>&1
+        ssh "${ssh_opts[@]}" -p "$port" "$user@$host" "echo 'Connection successful'" > "$ssh_output" 2>&1
         ssh_status=$?
     fi
 

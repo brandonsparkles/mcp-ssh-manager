@@ -73,10 +73,13 @@ export function resolveServerName(nameOrAlias, servers) {
   if (nameOrAlias.includes('.')) {
     const matchingServer = serverNames.find(name => {
       const serverHost = servers[name].host;
+      // Match only on a domain boundary, never an arbitrary substring: exact
+      // host, or one being a subdomain of the other. This stops a short
+      // serverHost (e.g. "ai") from spuriously matching unrelated FQDNs.
       return serverHost && (
         serverHost === nameOrAlias ||
-        serverHost.includes(nameOrAlias) ||
-        nameOrAlias.includes(serverHost)
+        serverHost.endsWith(`.${nameOrAlias}`) ||
+        nameOrAlias.endsWith(`.${serverHost}`)
       );
     });
 

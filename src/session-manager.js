@@ -9,6 +9,11 @@ import { logger } from './logger.js';
 // Map to store active sessions
 const sessions = new Map();
 
+// Cap the per-session output buffer so a long-running or noisy command cannot
+// grow it without bound. We keep the most recent bytes, which still contains
+// the completion marker that waitForMarker/execute look for at the tail.
+const MAX_OUTPUT_BUFFER = 1024 * 1024; // 1 MiB
+
 function generateMarker(prefix) {
   return `${prefix}_${uuidv4().replace(/-/g, '')}`;
 }
@@ -63,6 +68,9 @@ class SSHSession {
       // Setup event handlers
       this.shell.on('data', (data) => {
         this.outputBuffer += data.toString();
+        if (this.outputBuffer.length > MAX_OUTPUT_BUFFER) {
+          this.outputBuffer = this.outputBuffer.slice(-MAX_OUTPUT_BUFFER);
+        }
         this.lastActivity = new Date();
 
         // Log output in verbose mode
@@ -141,10 +149,12 @@ class SSHSession {
         this.context.cwd = pwdResult.output.trim();
       }
 
-      // Get environment variables (selective)
-      const envResult = await this.execute('echo $PATH:$USER:$HOME', { silent: true });
+      // Get environment variables (selective). Emit each value on its own
+      // line so a value that itself contains ':' (e.g. PATH) does not corrupt
+      // the others when we split.
+      const envResult = await this.execute('printf \'%s\\n\' "$PATH" "$USER" "$HOME"', { silent: true });
       if (envResult.success) {
-        const [path, user, home] = envResult.output.trim().split(':');
+        const [path, user, home] = envResult.output.split(/\r?\n/);
         this.context.env = { PATH: path, USER: user, HOME: home };
       }
     } catch (error) {
@@ -393,13 +403,25 @@ export function cleanupSessions(maxAge = 30 * 60 * 1000) { // 30 minutes default
   return cleanedCount;
 }
 
-// Periodic cleanup of inactive sessions
-setInterval(() => {
+// Periodic cleanup of inactive sessions. Keep a handle so the timer can be
+// cancelled, and unref() it so it never keeps the Node process alive on its own.
+const cleanupTimer = setInterval(() => {
   const cleaned = cleanupSessions();
   if (cleaned > 0) {
     logger.info(`Cleaned up ${cleaned} inactive sessions`);
   }
 }, 5 * 60 * 1000); // Every 5 minutes
+
+if (typeof cleanupTimer.unref === 'function') {
+  cleanupTimer.unref();
+}
+
+/**
+ * Stop the periodic cleanup timer (e.g. on shutdown).
+ */
+export function stopCleanupTimer() {
+  clearInterval(cleanupTimer);
+}
 
 export default {
   createSession,
@@ -408,5 +430,6 @@ export default {
   closeSession,
   closeServerSessions,
   cleanupSessions,
+  stopCleanupTimer,
   SESSION_STATES
 };

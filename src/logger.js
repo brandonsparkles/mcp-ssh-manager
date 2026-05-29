@@ -48,7 +48,7 @@ class Logger {
     this.logFile = process.env.SSH_LOG_FILE || path.join(__dirname, '..', '.ssh-manager.log');
 
     // Command history file
-    this.historyFile = path.join(__dirname, '..', '.ssh-command-history.json');
+    this.historyFile = process.env.SSH_HISTORY_FILE || path.join(__dirname, '..', '.ssh-command-history.json');
 
     // Initialize command history
     this.commandHistory = this.loadCommandHistory();
@@ -158,12 +158,10 @@ class Logger {
     // Output to stderr for proper MCP logging
     console.error(formatted.console);
 
-    // Also write to file
-    try {
-      fs.appendFileSync(this.logFile, formatted.file + '\n');
-    } catch (error) {
+    // Also write to file (async to avoid blocking the event loop on the hot path)
+    fs.appendFile(this.logFile, formatted.file + '\n', () => {
       // Ignore file write errors
-    }
+    });
   }
 
   // Convenience methods
@@ -296,6 +294,9 @@ class Logger {
 // Export singleton instance
 export const logger = new Logger();
 
-// Export for convenience
-export const { debug, info, warn, error } = logger;
+// Export for convenience (bind to preserve `this` when destructured by callers)
+export const debug = logger.debug.bind(logger);
+export const info = logger.info.bind(logger);
+export const warn = logger.warn.bind(logger);
+export const error = logger.error.bind(logger);
 export default logger;

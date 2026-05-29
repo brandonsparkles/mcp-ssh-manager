@@ -11,18 +11,28 @@ const __dirname = path.dirname(__filename);
 console.log('🔧 Testing MCP SSH Manager Server...\n');
 
 // Start the MCP server
-const serverPath = path.join(__dirname, 'src', 'index.js');
+const serverPath = path.join(__dirname, '..', 'src', 'index.js');
 const server = spawn('node', [serverPath], {
   stdio: ['pipe', 'pipe', 'pipe']
 });
 
-// Handle server output
+// Handle server output. Messages are newline-delimited JSON, so buffer raw
+// chunks and only parse complete lines — a single chunk may contain a partial
+// frame or several frames concatenated together.
+let stdoutBuffer = '';
 server.stdout.on('data', (data) => {
-  try {
-    const response = JSON.parse(data.toString());
-    console.log('✅ Server Response:', JSON.stringify(response, null, 2));
-  } catch (e) {
-    console.log('📝 Server Output:', data.toString());
+  stdoutBuffer += data.toString();
+  let newlineIndex;
+  while ((newlineIndex = stdoutBuffer.indexOf('\n')) !== -1) {
+    const line = stdoutBuffer.slice(0, newlineIndex);
+    stdoutBuffer = stdoutBuffer.slice(newlineIndex + 1);
+    if (!line.trim()) continue;
+    try {
+      const response = JSON.parse(line);
+      console.log('✅ Server Response:', JSON.stringify(response, null, 2));
+    } catch (e) {
+      console.log('📝 Server Output:', line);
+    }
   }
 });
 

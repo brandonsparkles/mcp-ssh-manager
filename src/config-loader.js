@@ -115,7 +115,7 @@ export class ConfigLoader {
   /**
    * Load configuration from TOML file
    */
-  async loadTomlConfig(tomlPath) {
+  loadTomlConfig(tomlPath) {
     const content = fs.readFileSync(tomlPath, 'utf8');
     const config = TOML.parse(content);
 
@@ -209,7 +209,7 @@ export class ConfigLoader {
           password: env[`SSH_SERVER_${match[1]}_PASSWORD`],
           keyPath: env[`SSH_SERVER_${match[1]}_KEYPATH`],
           passphrase: env[`SSH_SERVER_${match[1]}_PASSPHRASE`],
-          port: parseInt(env[`SSH_SERVER_${match[1]}_PORT`] || '22'),
+          port: parseInt(env[`SSH_SERVER_${match[1]}_PORT`] || '22', 10) || 22,
           defaultDir: env[`SSH_SERVER_${match[1]}_DEFAULT_DIR`],
           siteUser: env[`SSH_SERVER_${match[1]}_SITE_USER`] || env[`SSH_SERVER_${match[1]}_SITEUSER`],
           sudoPassword: env[`SSH_SERVER_${match[1]}_SUDO_PASSWORD`],

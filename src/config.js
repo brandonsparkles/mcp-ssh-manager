@@ -4,17 +4,17 @@
 export const OUTPUT_LIMITS = {
   // Maximum length of stdout/stderr in responses (characters)
   MAX_OUTPUT_LENGTH: process.env.MCP_SSH_MAX_OUTPUT_LENGTH
-    ? parseInt(process.env.MCP_SSH_MAX_OUTPUT_LENGTH)
+    ? parseInt(process.env.MCP_SSH_MAX_OUTPUT_LENGTH, 10) || 10000
     : 10000,
 
   // Maximum length for log file tailing
   MAX_TAIL_LINES: process.env.MCP_SSH_MAX_TAIL_LINES
-    ? parseInt(process.env.MCP_SSH_MAX_TAIL_LINES)
+    ? parseInt(process.env.MCP_SSH_MAX_TAIL_LINES, 10) || 100
     : 100,
 
   // Maximum length for rsync verbose output
   MAX_RSYNC_OUTPUT: process.env.MCP_SSH_MAX_RSYNC_OUTPUT
-    ? parseInt(process.env.MCP_SSH_MAX_RSYNC_OUTPUT)
+    ? parseInt(process.env.MCP_SSH_MAX_RSYNC_OUTPUT, 10) || 5000
     : 5000,
 };
 
@@ -22,22 +22,22 @@ export const OUTPUT_LIMITS = {
 export const TIMEOUTS = {
   // Default command execution timeout (milliseconds)
   DEFAULT_COMMAND_TIMEOUT: process.env.MCP_SSH_DEFAULT_TIMEOUT
-    ? parseInt(process.env.MCP_SSH_DEFAULT_TIMEOUT)
+    ? parseInt(process.env.MCP_SSH_DEFAULT_TIMEOUT, 10) || 120000
     : 120000, // 2 minutes
 
   // Maximum allowed command timeout (milliseconds)
   MAX_COMMAND_TIMEOUT: process.env.MCP_SSH_MAX_TIMEOUT
-    ? parseInt(process.env.MCP_SSH_MAX_TIMEOUT)
+    ? parseInt(process.env.MCP_SSH_MAX_TIMEOUT, 10) || 300000
     : 300000, // 5 minutes
 
   // Connection timeout (milliseconds)
   CONNECTION_TIMEOUT: process.env.MCP_SSH_CONNECTION_TIMEOUT
-    ? parseInt(process.env.MCP_SSH_CONNECTION_TIMEOUT)
+    ? parseInt(process.env.MCP_SSH_CONNECTION_TIMEOUT, 10) || 1800000
     : 1800000, // 30 minutes
 
   // Keepalive interval (milliseconds)
   KEEPALIVE_INTERVAL: process.env.MCP_SSH_KEEPALIVE_INTERVAL
-    ? parseInt(process.env.MCP_SSH_KEEPALIVE_INTERVAL)
+    ? parseInt(process.env.MCP_SSH_KEEPALIVE_INTERVAL, 10) || 60000
     : 60000, // 1 minute
 };
 
@@ -53,6 +53,8 @@ export const RESPONSE_FORMAT = {
 // Helper function to truncate output
 export function truncateOutput(text, maxLength = OUTPUT_LIMITS.MAX_OUTPUT_LENGTH) {
   if (!text) return '';
+
+  text = String(text);
 
   if (text.length <= maxLength) return text;
 

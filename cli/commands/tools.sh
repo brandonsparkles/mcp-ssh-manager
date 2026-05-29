@@ -199,7 +199,7 @@ cmd_tools_show() {
     print_header "Tool Configuration Details"
     echo ""
 
-    cat "$TOOLS_CONFIG" | jq '.' 2>/dev/null || {
+    jq '.' "$TOOLS_CONFIG" 2>/dev/null || {
         print_error "Failed to parse configuration file"
         return 1
     }
@@ -387,7 +387,7 @@ cmd_tools_configure() {
     echo "     └─ Balances features and context usage"
     echo ""
 
-    read -p "Choose [1-3]: " mode_choice
+    read -r -p "Choose [1-3]: " mode_choice
 
     # Create config directory
     mkdir -p "$(dirname "$TOOLS_CONFIG")"

@@ -1,19 +1,23 @@
 #!/bin/bash
 
+# Resolve the repository root from the script location so the checks below
+# inspect the project files regardless of the caller's current directory.
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+
 echo "🔧 Testing MCP SSH Manager for Claude Code"
 echo "==========================================="
 echo ""
 
 # Check dependencies
 echo "📦 Checking dependencies..."
-if [ -f "package.json" ]; then
+if [ -f "$ROOT/package.json" ]; then
     echo "✅ package.json found"
 else
     echo "❌ package.json not found"
     exit 1
 fi
 
-if [ -d "node_modules" ]; then
+if [ -d "$ROOT/node_modules" ]; then
     echo "✅ node_modules found"
 else
     echo "❌ node_modules not found. Run: npm install"
@@ -23,9 +27,9 @@ fi
 # Check .env
 echo ""
 echo "🔐 Checking server configuration..."
-if [ -f ".env" ]; then
+if [ -f "$ROOT/.env" ]; then
     echo "✅ .env file found"
-    server_count=$(grep -c "SSH_SERVER_.*_HOST=" .env)
+    server_count=$(grep -c "SSH_SERVER_.*_HOST=" "$ROOT/.env")
     echo "✅ $server_count servers configured"
 else
     echo "❌ .env file not found"
@@ -52,8 +56,8 @@ fi
 echo ""
 echo "🎯 Configuration Summary:"
 echo "========================"
-echo "MCP Server Path: $(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/src/index.js"
-echo "Servers configured: $(grep -c "SSH_SERVER_.*_HOST=" .env 2>/dev/null || echo 0)"
+echo "MCP Server Path: $ROOT/src/index.js"
+echo "Servers configured: $(grep -c "SSH_SERVER_.*_HOST=" "$ROOT/.env" 2>/dev/null || echo 0)"
 echo ""
 echo "✅ Ready to use in Claude Code!"
 echo ""

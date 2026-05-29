@@ -132,8 +132,8 @@ wizard_add_server() {
     echo -e "  ${CYAN}2)${NC} ${LOCK} Password"
     echo "     Less secure, password required each time"
     echo
-    read -p "Choose [1-2]: " auth_choice
-    
+    read -r -p "Choose [1-2]: " auth_choice
+
     local auth_type auth_value
     case "$auth_choice" in
         2)
@@ -239,7 +239,7 @@ wizard_edit_server() {
         return 1
     fi
 
-    local server_name="$SELECTED_SERVER"
+    local server_name="$selected_server"
 
     # Load existing configuration
     local current_host=$(get_server_config "$server_name" "HOST")

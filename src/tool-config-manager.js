@@ -27,7 +27,12 @@ const CONFIG_FILE = path.join(CONFIG_DIR, 'tools-config.json');
  */
 export class ToolConfigManager {
   constructor() {
-    this.config = null;
+    // Initialise with defaults so mutation methods (enableGroup, disableTool,
+    // setMode, getSummary, …) can safely deref this.config even before load()
+    // is called. load() reassigns this.config unconditionally, so this is a
+    // harmless starting value; default mode 'all' preserves the prior
+    // "enabled until configured" behaviour.
+    this.config = this.getDefaultConfig();
     this.configPath = CONFIG_FILE;
   }
 
@@ -36,24 +41,32 @@ export class ToolConfigManager {
    * @returns {Promise<Object>} Configuration object
    */
   async load() {
+    let content;
     try {
-      if (fs.existsSync(this.configPath)) {
-        const content = fs.readFileSync(this.configPath, 'utf8');
-        this.config = JSON.parse(content);
-
-        // Validate config structure
-        if (!this.validateConfig(this.config)) {
-          logger.warn('Invalid tool configuration, using defaults');
-          this.config = this.getDefaultConfig();
-        } else {
-          logger.info(`Tool configuration loaded from ${this.configPath}`);
-          logger.info(`Mode: ${this.config.mode}, Enabled tools: ${this.getEnabledTools().length}/${totalToolCount()}`);
-        }
-      } else {
-        // No config file - default to all tools enabled
+      content = await fs.promises.readFile(this.configPath, 'utf8');
+    } catch (error) {
+      if (error.code === 'ENOENT') {
+        // No config file - default to all tools enabled (normal first-run path)
         logger.info('No tool configuration found, enabling all tools (default)');
         logger.info('Run "ssh-manager tools configure" to optimize and reduce context usage');
+      } else {
+        logger.error(`Failed to load tool configuration: ${error.message}`);
+        logger.info('Using default configuration (all tools enabled)');
+      }
+      this.config = this.getDefaultConfig();
+      return this.config;
+    }
+
+    try {
+      this.config = JSON.parse(content);
+
+      // Validate config structure
+      if (!this.validateConfig(this.config)) {
+        logger.warn('Invalid tool configuration, using defaults');
         this.config = this.getDefaultConfig();
+      } else {
+        logger.info(`Tool configuration loaded from ${this.configPath}`);
+        logger.info(`Mode: ${this.config.mode}, Enabled tools: ${this.getEnabledTools().length}/${totalToolCount()}`);
       }
     } catch (error) {
       logger.error(`Failed to load tool configuration: ${error.message}`);
@@ -200,14 +213,12 @@ export class ToolConfigManager {
    */
   async save() {
     try {
-      // Ensure config directory exists
-      if (!fs.existsSync(CONFIG_DIR)) {
-        fs.mkdirSync(CONFIG_DIR, { recursive: true });
-      }
+      // Ensure config directory exists (recursive mkdir is a no-op if present)
+      await fs.promises.mkdir(CONFIG_DIR, { recursive: true });
 
       // Write config file
       const content = JSON.stringify(this.config, null, 2);
-      fs.writeFileSync(this.configPath, content, 'utf8');
+      await fs.promises.writeFile(this.configPath, content, 'utf8');
 
       logger.info(`Tool configuration saved to ${this.configPath}`);
       return true;
@@ -404,17 +415,28 @@ export class ToolConfigManager {
  * Singleton instance
  */
 let toolConfigInstance = null;
+let toolConfigInit = null;
 
 /**
  * Load tool configuration (singleton)
  * @returns {Promise<ToolConfigManager>} Configuration manager instance
  */
 export async function loadToolConfig() {
-  if (!toolConfigInstance) {
-    toolConfigInstance = new ToolConfigManager();
-    await toolConfigInstance.load();
+  // Fully-loaded instance is published only after load() resolves, so
+  // concurrent callers never observe a partially-initialised manager.
+  if (toolConfigInstance) {
+    return toolConfigInstance;
   }
-  return toolConfigInstance;
+  if (!toolConfigInit) {
+    toolConfigInit = (async () => {
+      const instance = new ToolConfigManager();
+      await instance.load();
+      toolConfigInstance = instance; // publish only once fully loaded
+      toolConfigInit = null;
+      return instance;
+    })();
+  }
+  return toolConfigInit;
 }
 
 /**

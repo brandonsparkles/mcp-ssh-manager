@@ -164,7 +164,7 @@ export function getToolStats() {
     totalTools,
     groups: groups.map(groupName => ({
       name: groupName,
-      count: TOOL_GROUP_COUNTS[groupName],
+      count: TOOL_GROUPS[groupName].length,
       description: TOOL_GROUP_DESCRIPTIONS[groupName],
       tools: TOOL_GROUPS[groupName]
     }))
@@ -183,16 +183,28 @@ export function verifyIntegrity() {
     allTools.indexOf(tool) !== index
   );
 
-  const expectedTotal = Object.values(TOOL_GROUP_COUNTS).reduce((a, b) => a + b, 0);
+  // expectedTotal is derived from the live TOOL_GROUPS so the integrity check
+  // is self-consistent. Per-group drift (where TOOL_GROUP_COUNTS no longer
+  // matches the actual TOOL_GROUPS arrays but the totals still net out) is
+  // caught separately below.
+  const expectedTotal = Object.values(TOOL_GROUPS).reduce((sum, tools) => sum + tools.length, 0);
+
+  const countMismatches = Object.keys(TOOL_GROUPS).filter(
+    groupName => (TOOL_GROUP_COUNTS[groupName] ?? -1) !== TOOL_GROUPS[groupName].length
+  );
 
   return {
-    valid: duplicates.length === 0 && allTools.length === expectedTotal,
+    valid: duplicates.length === 0 && allTools.length === expectedTotal && countMismatches.length === 0,
     totalTools: allTools.length,
     uniqueTools: uniqueTools.size,
     expectedTotal,
     duplicates,
+    countMismatches,
     issues: []
       .concat(duplicates.length > 0 ? [`Found ${duplicates.length} duplicate tools`] : [])
       .concat(allTools.length !== expectedTotal ? [`Expected ${expectedTotal} tools but found ${allTools.length}`] : [])
+      .concat(countMismatches.map(groupName =>
+        `TOOL_GROUP_COUNTS.${groupName} (${TOOL_GROUP_COUNTS[groupName]}) does not match TOOL_GROUPS.${groupName}.length (${TOOL_GROUPS[groupName].length})`
+      ))
   };
 }

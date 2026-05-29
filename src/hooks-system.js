@@ -321,7 +321,25 @@ export function listHooks() {
  * Create a custom hook script
  */
 export async function createHookScript(scriptName, scriptContent) {
-  const scriptPath = path.join(HOOKS_DIR, scriptName);
+  // Sanitize scriptName to prevent path traversal: a caller-supplied value such
+  // as "../../etc/cron.d/evil" or "/etc/passwd" would otherwise let writeFileSync
+  // create an executable file (mode 755) anywhere the process can write. Reduce
+  // to the bare filename, reject empty/dotfile/unsafe names, and verify the
+  // resolved path stays inside HOOKS_DIR.
+  const safeName = path.basename(String(scriptName));
+  if (!safeName || safeName === '.' || safeName === '..' || !/^[A-Za-z0-9._-]+$/.test(safeName)) {
+    throw new Error(`Invalid hook script name: ${scriptName}`);
+  }
+
+  if (!fs.existsSync(HOOKS_DIR)) {
+    fs.mkdirSync(HOOKS_DIR, { recursive: true });
+  }
+
+  const scriptPath = path.join(HOOKS_DIR, safeName);
+  const resolvedDir = path.resolve(HOOKS_DIR) + path.sep;
+  if (!path.resolve(scriptPath).startsWith(resolvedDir)) {
+    throw new Error(`Invalid hook script name: ${scriptName}`);
+  }
 
   try {
     fs.writeFileSync(scriptPath, scriptContent);

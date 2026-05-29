@@ -92,7 +92,7 @@ spinner() {
     local delay=0.1
     local spinstr='⣾⣽⣻⢿⡿⣟⣯⣷'
     
-    while [ "$(ps a | awk '{print $1}' | grep $pid)" ]; do
+    while kill -0 "$pid" 2>/dev/null; do
         local temp=${spinstr#?}
         printf " [%c]  " "$spinstr"
         local spinstr=$temp${spinstr%"$temp"}
@@ -138,7 +138,7 @@ prompt_input() {
         read -p "$prompt: " input
     fi
     
-    eval "$var_name='$input'"
+    printf -v "$var_name" '%s' "$input"
 }
 
 prompt_password() {
@@ -148,7 +148,7 @@ prompt_password() {
     echo -n "$prompt: "
     read -s password
     echo
-    eval "$var_name='$password'"
+    printf -v "$var_name" '%s' "$password"
 }
 
 # Status indicators

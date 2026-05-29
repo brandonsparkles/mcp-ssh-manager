@@ -55,7 +55,7 @@ function section(msg) { console.log(`\n${C}━━ ${msg} ━━${N}`); }
 
 const HOST = process.env.SSH_E2E_HOST;
 const USER = process.env.SSH_E2E_USER;
-const PORT = parseInt(process.env.SSH_E2E_PORT || '22');
+const PORT = parseInt(process.env.SSH_E2E_PORT || '22', 10);
 const PASSWORD = process.env.SSH_E2E_PASSWORD;
 const KEYPATH = process.env.SSH_E2E_KEYPATH;
 const PASSPHRASE = process.env.SSH_E2E_PASSPHRASE;

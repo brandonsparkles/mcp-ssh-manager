@@ -5,6 +5,7 @@ import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js'
 import { z } from 'zod';
 import SSHManager from './ssh-manager.js';
 import * as dotenv from 'dotenv';
+import crypto from 'crypto';
 import fs from 'fs';
 import os from 'os';
 import path from 'path';
@@ -242,6 +243,12 @@ const keepaliveIntervals = new Map();
 // Map to track proxy jump dependencies (target -> jump server)
 const jumpDependencies = new Map();
 
+// Cache the resolved `timeout`/`gtimeout` binary per SSH connection so we don't
+// re-probe the remote host on every timed command. Keyed by the connection
+// object; entries are garbage-collected when the connection is disposed.
+// Values: resolved binary path string, or '' when neither binary is available.
+const timeoutBinaryCache = new WeakMap();
+
 // Cache for delta polling responses (key -> result signature + metadata)
 const executeDeltaCache = new Map();
 const EXECUTE_DELTA_CACHE_LIMIT = 200;
@@ -436,11 +443,15 @@ async function execCommandWithTimeout(ssh, command, options = {}, timeoutMs = 30
   const useSystemTimeout = timeoutMs > 0 && timeoutMs < 300000 && !rawCommand && platform !== 'windows'; // Max 5 minutes, not for raw commands
 
   if (useSystemTimeout) {
-    const probeResult = await ssh.execCommand('command -v timeout || command -v gtimeout', {
-      ...otherOptions,
-      timeout: Math.min(timeoutMs, 5000)
-    });
-    const timeoutBinary = String(probeResult.stdout || '').split('\n').find((line) => line.trim() !== '')?.trim();
+    let timeoutBinary = timeoutBinaryCache.get(ssh);
+    if (timeoutBinary === undefined) {
+      const probeResult = await ssh.execCommand('command -v timeout || command -v gtimeout', {
+        ...otherOptions,
+        timeout: Math.min(timeoutMs, 5000)
+      });
+      timeoutBinary = String(probeResult.stdout || '').split('\n').find((line) => line.trim() !== '')?.trim() || '';
+      timeoutBinaryCache.set(ssh, timeoutBinary);
+    }
 
     if (!timeoutBinary) {
       return ssh.execCommand(command, { ...otherOptions, timeout: timeoutMs });
@@ -1030,7 +1041,8 @@ registerToolConditional(
     try {
       await getConnection(serverName);
       const servers = loadServerConfig();
-      const serverConfig = servers[serverName.toLowerCase()];
+      const canonicalServerName = resolveServerName(serverName, servers) || serverName.toLowerCase();
+      const serverConfig = servers[canonicalServerName];
 
       // Check if sshpass is available for password authentication
       if (!serverConfig.keypath && serverConfig.password) {
@@ -1389,11 +1401,11 @@ registerToolConditional(
       if (follow) {
         command += ' -f';
       }
-      command += ` "${file}"`;
+      command += ` ${shellQuote(file)}`;
 
       // Add grep filter if specified
       if (grep) {
-        command += ` | grep "${grep}"`;
+        command += ` | grep -- ${shellQuote(grep)}`;
       }
 
       logger.info(`Starting tail on ${serverName}`, {
@@ -1711,7 +1723,7 @@ registerToolConditional(
       }
 
       output += '━'.repeat(60) + '\n';
-      output += `Total commands in history: ${logger.getHistory(1000).length}\n`;
+      output += `Total commands in history: ${logger.commandHistory.length}\n`;
 
       logger.info('Command history retrieved', {
         limit,
@@ -2353,7 +2365,6 @@ registerToolConditional(
         files: files.map(f => f.local).join(', ')
       });
 
-      const deployments = [];
       const results = [];
 
       // Prepare deployment for each file
@@ -2388,13 +2399,6 @@ registerToolConditional(
             results.push(`✅ ${step.type}: ${file.remote}`);
           }
         }
-
-        deployments.push({
-          local: file.local,
-          remote: file.remote,
-          tempFile,
-          strategy
-        });
       }
 
       // Execute post-deploy hook
@@ -3108,8 +3112,7 @@ registerToolConditional(
     description: 'Manage SSH host keys for security verification',
     inputSchema: {
       action: z.enum(['verify', 'accept', 'remove', 'list', 'check']).describe('Action to perform'),
-      server: z.string().optional().describe('Server name (required for most actions)'),
-      autoAccept: z.boolean().optional().describe('Automatically accept new keys (use with caution)')
+      server: z.string().optional().describe('Server name (required for most actions)')
     }
   },
   async ({ action, server }) => {
@@ -3486,7 +3489,7 @@ registerToolConditional(
       const metadataPath = getBackupMetadataPath(backupId, backupDirectory);
 
       // Ensure backup directory exists with proper error handling
-      const mkdirResult = await ssh.execCommand(`mkdir -p "${backupDirectory}"`);
+      const mkdirResult = await ssh.execCommand(`mkdir -p ${shellQuote(backupDirectory)}`);
       if (mkdirResult.code !== 0) {
         throw new Error(`Failed to create backup directory: ${mkdirResult.stderr || mkdirResult.stdout}`);
       }
@@ -3577,7 +3580,7 @@ registerToolConditional(
       }
 
       // Get backup file size
-      const sizeResult = await ssh.execCommand(`stat -f%z "${backupFile}" 2>/dev/null || stat -c%s "${backupFile}" 2>/dev/null`);
+      const sizeResult = await ssh.execCommand(`stat -f%z ${shellQuote(backupFile)} 2>/dev/null || stat -c%s ${shellQuote(backupFile)} 2>/dev/null`);
       const size = parseInt(sizeResult.stdout.trim()) || 0;
 
       // Create and save metadata

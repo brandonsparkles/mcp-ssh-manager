@@ -46,13 +46,13 @@
       "description": "Run after Node.js deployment",
       "actions": [
         {
-          "type": "notification",
+          "type": "verification",
           "name": "install-deps",
           "remoteCommand": "npm ci --production",
           "server": "{server}"
         },
         {
-          "type": "notification",
+          "type": "verification",
           "name": "restart-app",
           "remoteCommand": "pm2 restart all || npm restart",
           "server": "{server}"

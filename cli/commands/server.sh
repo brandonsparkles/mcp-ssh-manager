@@ -30,6 +30,7 @@ cmd_server_add() {
     echo -e "\nAuthentication method:"
     echo "  1) SSH Key"
     echo "  2) Password"
+    local auth_choice
     read -p "Choose [1-2]: " auth_choice
     
     local auth_type auth_value
@@ -113,7 +114,10 @@ cmd_server_add() {
 cmd_server_list() {
     print_header "SSH Servers"
 
-    local servers=($(load_servers))
+    local servers=()
+    while IFS= read -r n; do
+        [ -n "$n" ] && servers+=("$n")
+    done < <(load_servers)
 
     if [ ${#servers[@]} -eq 0 ]; then
         print_warning "No servers configured"

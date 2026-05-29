@@ -46,6 +46,12 @@ function assertSafeMongoCollection(collection) {
   }
 }
 
+function assertSafeDatabaseName(database) {
+  if (!/^[A-Za-z0-9_.-]+$/.test(database || '')) {
+    throw new Error('Database name contains unsafe characters');
+  }
+}
+
 /**
  * Build MySQL dump command
  */
@@ -61,10 +67,14 @@ export function buildMySQLDumpCommand(options) {
     tables = null
   } = options;
 
-  let command = 'mysqldump';
+  let command = '';
+  if (password) {
+    command = `MYSQL_PWD=${shellQuote(password)} `;
+  }
+
+  command += 'mysqldump';
 
   if (user) command += ` -u ${shellQuote(user)}`;
-  if (password) command += ` --password=${shellQuote(password)}`;
   if (host) command += ` -h ${shellQuote(host)}`;
   if (port) command += ` -P ${shellQuote(port)}`;
 
@@ -186,9 +196,9 @@ export function buildMySQLImportCommand(options) {
     command = `cat ${shellQuote(inputFile)} | `;
   }
 
+  if (password) command += `MYSQL_PWD=${shellQuote(password)} `;
   command += 'mysql';
   if (user) command += ` -u ${shellQuote(user)}`;
-  if (password) command += ` --password=${shellQuote(password)}`;
   if (host) command += ` -h ${shellQuote(host)}`;
   if (port) command += ` -P ${shellQuote(port)}`;
   command += ` ${shellQuote(database)}`;
@@ -275,9 +285,10 @@ export function buildMongoDBRestoreCommand(options) {
 export function buildMySQLListDatabasesCommand(options) {
   const { user, password, host = 'localhost', port = 3306 } = options;
 
-  let command = 'mysql';
+  let command = '';
+  if (password) command = `MYSQL_PWD=${shellQuote(password)} `;
+  command += 'mysql';
   if (user) command += ` -u ${shellQuote(user)}`;
-  if (password) command += ` --password=${shellQuote(password)}`;
   if (host) command += ` -h ${shellQuote(host)}`;
   if (port) command += ` -P ${shellQuote(port)}`;
   command += ' -e "SHOW DATABASES;" | tail -n +2';
@@ -290,10 +301,12 @@ export function buildMySQLListDatabasesCommand(options) {
  */
 export function buildMySQLListTablesCommand(options) {
   const { database, user, password, host = 'localhost', port = 3306 } = options;
+  assertSafeDatabaseName(database);
 
-  let command = 'mysql';
+  let command = '';
+  if (password) command = `MYSQL_PWD=${shellQuote(password)} `;
+  command += 'mysql';
   if (user) command += ` -u ${shellQuote(user)}`;
-  if (password) command += ` --password=${shellQuote(password)}`;
   if (host) command += ` -h ${shellQuote(host)}`;
   if (port) command += ` -P ${shellQuote(port)}`;
   command += ` -e ${shellQuote(`USE ${database}; SHOW TABLES;`)} | tail -n +2`;
@@ -348,7 +361,7 @@ export function buildPostgreSQLListTablesCommand(options) {
 export function buildMongoDBListDatabasesCommand(options) {
   const { user, password, host = 'localhost', port = 27017 } = options;
 
-  let command = 'mongo';
+  let command = 'mongosh';
   if (host) command += ` --host ${shellQuote(host)}`;
   if (port) command += ` --port ${shellQuote(port)}`;
   if (user) command += ` --username ${shellQuote(user)}`;
@@ -364,7 +377,7 @@ export function buildMongoDBListDatabasesCommand(options) {
 export function buildMongoDBListCollectionsCommand(options) {
   const { database, user, password, host = 'localhost', port = 27017 } = options;
 
-  let command = 'mongo';
+  let command = 'mongosh';
   if (host) command += ` --host ${shellQuote(host)}`;
   if (port) command += ` --port ${shellQuote(port)}`;
   if (user) command += ` --username ${shellQuote(user)}`;
@@ -386,9 +399,10 @@ export function buildMySQLQueryCommand(options) {
     throw new Error('Only SELECT queries are allowed');
   }
 
-  let command = 'mysql';
+  let command = '';
+  if (password) command = `MYSQL_PWD=${shellQuote(password)} `;
+  command += 'mysql';
   if (user) command += ` -u ${shellQuote(user)}`;
-  if (password) command += ` --password=${shellQuote(password)}`;
   if (host) command += ` -h ${shellQuote(host)}`;
   if (port) command += ` -P ${shellQuote(port)}`;
   command += ` ${shellQuote(database)}`;
@@ -435,13 +449,28 @@ export function buildMongoDBQueryCommand(options) {
   const { database, collection, query, user, password, host = 'localhost', port = 27017 } = options;
   assertSafeMongoCollection(collection);
 
-  let command = 'mongo';
+  // Coerce the query filter to plain JSON data so it cannot inject JS into the
+  // --eval program. An empty/blank query means "match everything".
+  let filter;
+  if (query === undefined || query === null || String(query).trim() === '') {
+    filter = '{}';
+  } else {
+    let parsed;
+    try {
+      parsed = JSON.parse(query);
+    } catch (e) {
+      throw new Error('MongoDB query must be a valid JSON filter object');
+    }
+    filter = JSON.stringify(parsed);
+  }
+
+  let command = 'mongosh';
   if (host) command += ` --host ${shellQuote(host)}`;
   if (port) command += ` --port ${shellQuote(port)}`;
   if (user) command += ` --username ${shellQuote(user)}`;
   if (password) command += ` --password ${shellQuote(password)}`;
   command += ` ${shellQuote(database)}`;
-  command += ` --quiet --eval ${shellQuote(`db.getCollection(${JSON.stringify(collection)}).find(${query || '{}'}).forEach(printjson)`)}`;
+  command += ` --quiet --eval ${shellQuote(`db.getCollection(${JSON.stringify(collection)}).find(${filter}).forEach(printjson)`)}`;
 
   return command;
 }
@@ -464,7 +493,9 @@ export function isSafeQuery(query) {
   ];
 
   for (const keyword of dangerousKeywords) {
-    if (trimmedQuery.includes(keyword)) {
+    // Match whole words only so columns/tables like `created_at` or
+    // `order_updates` are not mistaken for `create` / `update`.
+    if (new RegExp(`\\b${keyword}\\b`).test(trimmedQuery)) {
       return false;
     }
   }
@@ -507,9 +538,11 @@ export function buildEstimateSizeCommand(type, database, options = {}) {
 
   switch (type) {
   case DB_TYPES.MYSQL: {
-    let command = 'mysql';
+    assertSafeDatabaseName(database);
+    let command = '';
+    if (password) command = `MYSQL_PWD=${shellQuote(password)} `;
+    command += 'mysql';
     if (user) command += ` -u ${shellQuote(user)}`;
-    if (password) command += ` --password=${shellQuote(password)}`;
     if (host) command += ` -h ${shellQuote(host)}`;
     if (port) command += ` -P ${shellQuote(port)}`;
     command += ` -e ${shellQuote(`SELECT SUM(data_length + index_length) FROM information_schema.TABLES WHERE table_schema='${database}';`)} | tail -n 1`;
@@ -517,6 +550,7 @@ export function buildEstimateSizeCommand(type, database, options = {}) {
   }
 
   case DB_TYPES.POSTGRESQL: {
+    assertSafeDatabaseName(database);
     let command = '';
     if (password) {
       command = `PGPASSWORD=${shellQuote(password)} `;
@@ -531,7 +565,7 @@ export function buildEstimateSizeCommand(type, database, options = {}) {
   }
 
   case DB_TYPES.MONGODB: {
-    let command = 'mongo';
+    let command = 'mongosh';
     if (host) command += ` --host ${shellQuote(host)}`;
     if (port) command += ` --port ${shellQuote(port)}`;
     if (user) command += ` --username ${shellQuote(user)}`;

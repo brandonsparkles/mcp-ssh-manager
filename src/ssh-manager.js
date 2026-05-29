@@ -22,6 +22,18 @@ class SSHManager {
   }
 
   async connect(options = {}) {
+    // Read the private key (if any) asynchronously before entering the Promise
+    // executor so we never block the event loop with a synchronous file read.
+    // Support both keyPath and keypath for compatibility.
+    const keyPath = this.config.keyPath || this.config.keypath;
+    let privateKey = null;
+    if (keyPath) {
+      // Only expand a leading "~" (bare or followed by "/"); never replace a
+      // tilde that appears elsewhere in the path.
+      const resolvedKeyPath = keyPath.replace(/^~(?=\/|$)/, os.homedir());
+      privateKey = await fs.promises.readFile(resolvedKeyPath);
+    }
+
     return new Promise((resolve, reject) => {
       this.client.on('ready', () => {
         this.connected = true;
@@ -106,11 +118,9 @@ class SSHManager {
         connConfig.agent = process.env.SSH_AUTH_SOCK;
       }
 
-      // Add authentication (support both keyPath and keypath for compatibility)
-      const keyPath = this.config.keyPath || this.config.keypath;
-      if (keyPath) {
-        const resolvedKeyPath = keyPath.replace('~', os.homedir());
-        connConfig.privateKey = fs.readFileSync(resolvedKeyPath);
+      // Add authentication (key read above before entering the Promise executor)
+      if (privateKey) {
+        connConfig.privateKey = privateKey;
         if (this.config.passphrase) {
           connConfig.passphrase = this.config.passphrase;
         }
@@ -214,7 +224,7 @@ class SSHManager {
             // Ignore errors
           }
 
-          fail(new Error(`Command timeout after ${timeout}ms: ${command.substring(0, 100)}...`));
+          fail(new Error(`Command timeout after ${timeout}ms: ${command.substring(0, 100)}${command.length > 100 ? '...' : ''}`));
         }, timeout);
       }
 

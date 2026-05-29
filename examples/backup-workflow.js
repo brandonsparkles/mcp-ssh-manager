@@ -246,6 +246,53 @@ const prodMongo = {
 };
 
 // ============================================================================
+// WORKFLOW HELPERS
+// ============================================================================
+
+/*
+The async workflow examples below (Examples 10-12) call these thin helpers.
+In a real integration each helper invokes the matching MCP tool through your
+client of choice (Claude Code, OpenAI Codex, etc.) and returns its parsed
+response. They are defined here so the workflow functions reference real
+callables instead of undefined globals.
+*/
+
+async function runBackup(params) {
+  // Invokes the `ssh_backup_create` MCP tool. See `mysqlBackup` for the shape.
+  return { success: true, backup_id: 'example-backup-id', location: '/var/backups/example.gz' };
+}
+
+async function runRestore(params) {
+  // Invokes the `ssh_backup_restore` MCP tool. See `restoreBackup` for the shape.
+  return { success: true };
+}
+
+async function runListBackups(params) {
+  // Invokes the `ssh_backup_list` MCP tool. See `listBackups` for the shape.
+  return { success: true, count: 0, backups: [] };
+}
+
+async function runDeploy(params) {
+  // Invokes your deployment tool/flow (e.g. `ssh_deploy`).
+  return { success: true };
+}
+
+async function runHealthCheck(params) {
+  // Invokes the `ssh_health_check` MCP tool.
+  return { success: true };
+}
+
+async function runDownloadFile(params) {
+  // Invokes the `ssh_download` MCP tool.
+  return { success: true };
+}
+
+async function runLocalCommand(command) {
+  // Executes a command on the local machine (e.g. via child_process).
+  return { success: true };
+}
+
+// ============================================================================
 // EXAMPLE 10: Pre-Deployment Workflow
 // ============================================================================
 
@@ -256,7 +303,7 @@ Complete deployment workflow with backup safety net
 async function preDeploymentWorkflow() {
   // Step 1: Create backup
   console.log("Creating pre-deployment backup...");
-  const backup = await createBackup({
+  const backup = await runBackup({
     server: 'production',
     type: 'mysql',
     name: 'pre-deploy',
@@ -267,21 +314,21 @@ async function preDeploymentWorkflow() {
 
   // Step 2: Deploy changes
   console.log("Deploying new version...");
-  await deploy({
+  await runDeploy({
     server: 'production',
     branch: 'main'
   });
 
   // Step 3: Run health check
   console.log("Running health checks...");
-  const health = await healthCheck({
+  const health = await runHealthCheck({
     server: 'production'
   });
 
   // Step 4: If deployment fails, restore backup
   if (!health.success) {
     console.error("Deployment failed! Rolling back...");
-    await restoreBackup({
+    await runRestore({
       server: 'production',
       backupId: backup.backup_id
     });
@@ -301,7 +348,7 @@ User: "Recover production database from yesterday's backup"
 
 async function disasterRecovery() {
   // Step 1: List all backups
-  const backups = await listBackups({
+  const backups = await runListBackups({
     server: 'production',
     type: 'mysql'
   });
@@ -321,7 +368,7 @@ async function disasterRecovery() {
 
   // Step 3: Restore
   console.log(`Restoring backup: ${yesterdayBackup.id}`);
-  await restoreBackup({
+  await runRestore({
     server: 'production',
     backupId: yesterdayBackup.id
   });
@@ -339,29 +386,32 @@ User: "Backup database and upload to S3"
 
 async function backupToS3() {
   // Step 1: Create local backup
-  const backup = await createBackup({
+  const backup = await runBackup({
     server: 'production',
     type: 'mysql',
     name: 'prod-db',
     database: 'myapp_prod'
   });
 
-  // Step 2: Download backup from server
-  await downloadFile({
-    server: 'production',
-    remotePath: backup.location,
-    localPath: '/tmp/backup.gz'
-  });
+  try {
+    // Step 2: Download backup from server
+    await runDownloadFile({
+      server: 'production',
+      remotePath: backup.location,
+      localPath: '/tmp/backup.gz'
+    });
 
-  // Step 3: Upload to S3 (requires AWS CLI on local machine)
-  await executeLocal(
-    `aws s3 cp /tmp/backup.gz s3://my-backups/${backup.backup_id}.gz`
-  );
+    // Step 3: Upload to S3 (requires AWS CLI on local machine)
+    await runLocalCommand(
+      `aws s3 cp /tmp/backup.gz s3://my-backups/${backup.backup_id}.gz`
+    );
 
-  // Step 4: Clean up local file
-  await executeLocal('rm /tmp/backup.gz');
-
-  console.log(`Backup uploaded to S3: s3://my-backups/${backup.backup_id}.gz`);
+    console.log(`Backup uploaded to S3: s3://my-backups/${backup.backup_id}.gz`);
+  } finally {
+    // Step 4: Always clean up the sensitive local file, even if the upload
+    // (or download) above throws — otherwise /tmp/backup.gz is left on disk.
+    await runLocalCommand('rm -f /tmp/backup.gz');
+  }
 }
 
 // ============================================================================
@@ -400,33 +450,31 @@ const monthlyCompliance = {
 // CRON SCHEDULE REFERENCE
 // ============================================================================
 
-/*
-Common cron schedules:
-
-Daily:
-  - "0 2 * * *"        // Every day at 2 AM
-  - "0 0 * * *"        // Every day at midnight
-
-Hourly:
-  - "0 * * * *"        // Every hour at minute 0
-  - "0 */6 * * *"      // Every 6 hours
-
-Weekly:
-  - "0 0 * * 0"        // Every Sunday at midnight
-  - "0 3 * * 1"        // Every Monday at 3 AM
-
-Monthly:
-  - "0 0 1 * *"        // 1st of month at midnight
-  - "0 2 15 * *"       // 15th of month at 2 AM
-
-Weekdays:
-  - "0 1 * * 1-5"      // Mon-Fri at 1 AM
-
-Custom:
-  - "*/30 * * * *"     // Every 30 minutes
-  - "0 */4 * * *"      // Every 4 hours
-  - "0 9-17 * * *"     // Every hour from 9 AM to 5 PM
-*/
+// Common cron schedules:
+//
+// Daily:
+//   - "0 2 * * *"        // Every day at 2 AM
+//   - "0 0 * * *"        // Every day at midnight
+//
+// Hourly:
+//   - "0 * * * *"        // Every hour at minute 0
+//   - "0 */6 * * *"      // Every 6 hours
+//
+// Weekly:
+//   - "0 0 * * 0"        // Every Sunday at midnight
+//   - "0 3 * * 1"        // Every Monday at 3 AM
+//
+// Monthly:
+//   - "0 0 1 * *"        // 1st of month at midnight
+//   - "0 2 15 * *"       // 15th of month at 2 AM
+//
+// Weekdays:
+//   - "0 1 * * 1-5"      // Mon-Fri at 1 AM
+//
+// Custom:
+//   - "*/30 * * * *"     // Every 30 minutes
+//   - "0 */4 * * *"      // Every 4 hours
+//   - "0 9-17 * * *"     // Every hour from 9 AM to 5 PM
 
 // ============================================================================
 // NOTES
@@ -474,7 +522,12 @@ module.exports = {
   listBackups,
   restoreBackup,
   scheduleDaily,
+  scheduleWeekly,
+  prodMysql,
+  prodPostgres,
+  prodMongo,
   complianceBackup,
+  monthlyCompliance,
   preDeploymentWorkflow,
   disasterRecovery,
   backupToS3

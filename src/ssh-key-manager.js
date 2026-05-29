@@ -51,9 +51,22 @@ function fingerprintForKey(key) {
  */
 export async function getHostKeyFingerprint(host, port = 22) {
   return new Promise((resolve, reject) => {
-    const cmd = spawn('ssh-keyscan', ['-p', port.toString(), '-t', 'ed25519,rsa,ecdsa', host]);
+    // Cap ssh-keyscan's own per-host connect time so the child cannot hang on a
+    // filtered/unreachable port; the wall-clock timer below is the backstop.
+    const cmd = spawn('ssh-keyscan', ['-T', '10', '-p', port.toString(), '-t', 'ed25519,rsa,ecdsa', host]);
     let stdout = '';
     let stderr = '';
+    let settled = false;
+
+    // Wall-clock guard: kill the child and reject if it never exits, so the
+    // returned Promise can never stay pending forever.
+    const timer = setTimeout(() => {
+      if (settled) return;
+      settled = true;
+      cmd.kill('SIGKILL');
+      reject(new Error(`ssh-keyscan for ${host}:${port} timed out`));
+    }, 30000);
+    timer.unref?.();
 
     cmd.stdout.on('data', (data) => {
       stdout += data.toString();
@@ -63,7 +76,19 @@ export async function getHostKeyFingerprint(host, port = 22) {
       stderr += data.toString();
     });
 
+    // Spawn-level failure (e.g. ssh-keyscan not installed -> ENOENT) would
+    // otherwise leave the Promise pending; reject explicitly.
+    cmd.on('error', (err) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      reject(new Error(`Failed to run ssh-keyscan: ${err.message}`));
+    });
+
     cmd.on('close', (code) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
       if (code !== 0) {
         reject(new Error(`Failed to get host key: ${stderr}`));
         return;
@@ -308,15 +333,16 @@ export function detectSSHKeyError(stderr) {
     'WARNING: REMOTE HOST IDENTIFICATION HAS CHANGED',
     'Host key verification failed',
     'The authenticity of host',
-    'ECDSA host key for .* has changed',
-    'RSA host key for .* has changed',
-    'ED25519 host key for .* has changed',
+    /(?:ECDSA|RSA|ED25519) host key for .* has changed/,
     'Offending key in',
     'Add correct host key in'
   ];
 
   for (const pattern of keyErrorPatterns) {
-    if (stderr.includes(pattern)) {
+    const matched = typeof pattern === 'string'
+      ? stderr.includes(pattern)
+      : pattern.test(stderr);
+    if (matched) {
       return true;
     }
   }
@@ -328,9 +354,11 @@ export function detectSSHKeyError(stderr) {
  * Extract host info from SSH error
  */
 export function extractHostFromSSHError(stderr) {
-  // Try to extract host and port from error message
+  // Try to extract host and port from error message.
+  // Note: the "Offending ... key in <file>:<line>" line only reports the
+  // known_hosts path and line number, never the hostname, so it is not used
+  // here (its trailing :(\d+) is a line number, not a host or port).
   const patterns = [
-    /Offending (?:RSA|ECDSA|ED25519) key in .+:(\d+)/i,
     /Host key for \[([^\]]+)\]:(\d+) has changed/i,
     /Host key for ([^\s]+) has changed/i,
     /The authenticity of host '\[([^\]]+)\]:(\d+)'/i,

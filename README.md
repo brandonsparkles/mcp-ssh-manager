@@ -7,7 +7,7 @@ A Model Context Protocol (MCP) server that enables **Claude Code** and **OpenAI 
 
 [![npm version](https://img.shields.io/npm/v/mcp-ssh-manager.svg?style=for-the-badge&logo=npm)](https://www.npmjs.com/package/mcp-ssh-manager)
 [![npm downloads](https://img.shields.io/npm/dt/mcp-ssh-manager.svg?style=for-the-badge&logo=npm)](https://www.npmjs.com/package/mcp-ssh-manager)
-[![Version](https://img.shields.io/badge/Version-3.5.0-brightgreen?style=for-the-badge)](https://github.com/bvisible/mcp-ssh-manager/releases/tag/v3.5.0)
+[![Version](https://img.shields.io/badge/Version-3.5.0-brightgreen?style=for-the-badge)](https://github.com/brandonsparkles/mcp-ssh-manager/releases/tag/v3.5.0)
 [![Claude Code](https://img.shields.io/badge/Claude_Code-Compatible-5A67D8?style=for-the-badge&logo=anthropic)](https://claude.ai/code)
 [![OpenAI Codex](https://img.shields.io/badge/OpenAI_Codex-Compatible-00A67E?style=for-the-badge&logo=openai)](https://openai.com/codex)
 [![MCP](https://img.shields.io/badge/MCP-Server-orange?style=for-the-badge)](https://modelcontextprotocol.io)
@@ -265,7 +265,7 @@ npx mcp-ssh-manager
 
 ```bash
 # Clone and install
-git clone https://github.com/bvisible/mcp-ssh-manager.git
+git clone https://github.com/brandonsparkles/mcp-ssh-manager.git
 cd mcp-ssh-manager
 npm install
 
@@ -1003,7 +1003,7 @@ This project is licensed under the MIT License - see the [LICENSE](LICENSE) file
 ## 📧 Support
 
 For issues, questions, or suggestions:
-- Open an issue on [GitHub Issues](https://github.com/bvisible/mcp-ssh-manager/issues)
+- Open an issue on [GitHub Issues](https://github.com/brandonsparkles/mcp-ssh-manager/issues)
 - Check existing issues before creating new ones
 
 ---
@@ -1012,17 +1012,5 @@ For issues, questions, or suggestions:
 <div align="center">
 
 Made with ❤️ for the Claude Code community
-
-<br/><br/>
-
-<a href="https://glama.ai/mcp/servers/@bvisible/mcp-ssh-manager">
-  <img width="380" height="200" src="https://glama.ai/mcp/servers/@bvisible/mcp-ssh-manager/badge" alt="SSH Manager MCP server" />
-</a>
-
-<br/>
-
-<a href="https://mseep.ai/app/bvisible-mcp-ssh-manager">
-  <img src="https://mseep.net/pr/bvisible-mcp-ssh-manager-badge.png" alt="MseeP.ai Security Assessment Badge" />
-</a>
 
 </div>

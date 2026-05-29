@@ -13,7 +13,7 @@ Reduce context usage by 92% with intelligent tool activation. Enable only what y
 
 Install: `npm i -g mcp-ssh-manager`
 
-📦 <https://github.com/bvisible/mcp-ssh-manager>
+📦 <https://github.com/brandonsparkles/mcp-ssh-manager>
 🌟 Star if useful!
 
 **Hashtags:** #MCP #ClaudeCode #DevOps #SSH #AI #Automation
@@ -79,9 +79,9 @@ ssh-manager codex setup
 
 **Links:**
 
-- GitHub: <https://github.com/bvisible/mcp-ssh-manager>
+- GitHub: <https://github.com/brandonsparkles/mcp-ssh-manager>
 - NPM: <https://www.npmjs.com/package/mcp-ssh-manager>
-- Glama.ai: <https://glama.ai/mcp/servers/@bvisible/mcp-ssh-manager>
+- Glama.ai: <https://glama.ai/mcp/servers/@brandonsparkles/mcp-ssh-manager>
 - Documentation: Full guides for all features
 
 **Features I'm proud of:**
@@ -150,9 +150,9 @@ The biggest challenge was context usage - 39 tools consume ~44k tokens. Solution
 
 **Links:**
 
-- Repo: <https://github.com/bvisible/mcp-ssh-manager>
+- Repo: <https://github.com/brandonsparkles/mcp-ssh-manager>
 - NPM: <https://www.npmjs.com/package/mcp-ssh-manager>
-- Docs: <https://github.com/bvisible/mcp-ssh-manager#readme>
+- Docs: <https://github.com/brandonsparkles/mcp-ssh-manager#readme>
 
 Would love HN's feedback! What other DevOps automation would you want accessible from your AI assistant?
 
@@ -196,7 +196,7 @@ And it handles everything - safely and automatically.
 - Comprehensive audit logging
 - Security-first design
 
-Check it out: <https://github.com/bvisible/mcp-ssh-manager>
+Check it out: <https://github.com/brandonsparkles/mcp-ssh-manager>
 
 **Hashtags:** #DevOps #AI #Automation #ClaudeCode #SSH #EnterpriseIT #CloudComputing
 

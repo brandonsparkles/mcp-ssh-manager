@@ -18,7 +18,7 @@ bash --version   # Should show version 4.0 or higher
 
 ```bash
 # 1. Clone the repository
-git clone https://github.com/bvisible/mcp-ssh-manager.git
+git clone https://github.com/brandonsparkles/mcp-ssh-manager.git
 cd mcp-ssh-manager
 
 # 2. Install dependencies

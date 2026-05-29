@@ -34,7 +34,7 @@ Traditional SSH requires manual terminal commands and script writing. With **MCP
 ### Quick Installation
 
 ```bash
-git clone https://github.com/bvisible/mcp-ssh-manager.git
+git clone https://github.com/brandonsparkles/mcp-ssh-manager.git
 cd mcp-ssh-manager
 npm install
 claude mcp add ssh-manager node /path/to/mcp-ssh-manager/src/index.js
@@ -222,7 +222,7 @@ We welcome contributions to **MCP SSH Manager**! See [CONTRIBUTING.md](../CONTRI
 
 ### MCP SSH Support
 
-- GitHub Issues: [Report bugs](https://github.com/bvisible/mcp-ssh-manager/issues)
+- GitHub Issues: [Report bugs](https://github.com/brandonsparkles/mcp-ssh-manager/issues)
 - Documentation: [Full docs](../README.md)
 - Examples: [Example workflows](../examples/)
 
@@ -243,7 +243,7 @@ While there are other SSH tools and MCP servers, **MCP SSH Manager** offers:
 
 **Get started today:**
 ```bash
-git clone https://github.com/bvisible/mcp-ssh-manager.git
+git clone https://github.com/brandonsparkles/mcp-ssh-manager.git
 cd mcp-ssh-manager
 npm install
 ```
@@ -254,4 +254,4 @@ npm install
 
 This document covers: MCP SSH, SSH MCP, Model Context Protocol SSH, MCP SSH Manager, Claude Code SSH, OpenAI Codex SSH, SSH MCP Server, Remote SSH MCP, MCP Server SSH, SSH automation MCP, AI SSH tools, SSH Model Context Protocol, MCP SSH integration, SSH management MCP, MCP remote server, SSH DevOps MCP, MCP SSH backup, MCP SSH monitoring, MCP SSH database, SSH orchestration MCP.
 
-**Repository**: [https://github.com/bvisible/mcp-ssh-manager](https://github.com/bvisible/mcp-ssh-manager)
+**Repository**: [https://github.com/brandonsparkles/mcp-ssh-manager](https://github.com/brandonsparkles/mcp-ssh-manager)

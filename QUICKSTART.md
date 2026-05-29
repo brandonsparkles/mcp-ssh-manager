@@ -15,7 +15,7 @@ npm install -g mcp-ssh-manager
 
 From source (alternative):
 ```bash
-git clone https://github.com/bvisible/mcp-ssh-manager.git
+git clone https://github.com/brandonsparkles/mcp-ssh-manager.git
 cd mcp-ssh-manager
 npm install
 npm link

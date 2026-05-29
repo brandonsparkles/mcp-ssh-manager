@@ -116,7 +116,7 @@ ${BOLD}CONFIGURATION:${NC}
     Server config:    ${SSH_MANAGER_ENV:-.env}
 
 ${BOLD}DOCUMENTATION:${NC}
-    https://github.com/bvisible/mcp-ssh-manager
+    https://github.com/brandonsparkles/mcp-ssh-manager
 
 EOF
 }

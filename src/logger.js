@@ -63,6 +63,16 @@ class Logger {
       .replace(/\b(password|passphrase|token|secret|api[_-]?key)=('([^']|'\\'')*'|"[^"]*"|\S+)/gi, '$1=***');
   }
 
+  // Secrets-only scrub for free-form text (stderr/error output). Reuses the
+  // KEY=value secret patterns from redactCommand but omits the command-shape
+  // rules (-p, echo|sudo -S) that would mangle ordinary error prose.
+  redactSecrets(text) {
+    return String(text || '')
+      .replace(/\b(PGPASSWORD|MYSQL_PWD)=('([^']|'\\'')*'|"[^"]*"|\S+)/gi, '$1=***')
+      .replace(/\s--password(?:=|\s+)('([^']|'\\'')*'|"[^"]*"|\S+)/gi, ' --password=***')
+      .replace(/\b(password|passphrase|token|secret|api[_-]?key)=('([^']|'\\'')*'|"[^"]*"|\S+)/gi, '$1=***');
+  }
+
   commandForHistory(command, metadata = {}) {
     if (metadata.command_shape || metadata.tool) {
       const parts = [];
@@ -211,7 +221,7 @@ class Logger {
       success: !result.code,
       duration: `${duration}ms`,
       durationMs: duration,
-      error: result.code ? result.stderr : undefined
+      error: result.code ? this.redactSecrets(result.stderr) : undefined
     };
 
     // Save to history

@@ -5001,9 +5001,17 @@ registerToolConditional(
         `${cdPart}sudo -u ${shellQuote(executionSiteUser)} python3 ${shellQuote(remoteTempFile)}`,
       ].join(' && ') + `; _ec=$?; rm -f ${shellQuote(remoteTempFile)}; exit $_ec`;
 
-      const startTime = logger.logCommand(serverName, `[ssh_python_as_user] user=${executionSiteUser} script_bytes=${script.length}`, workingDir);
+      const pyHistoryCommand = `[ssh_python_as_user] run_as=site_user user=${executionSiteUser} shape=python_script script_bytes=${script.length}`;
+      const startTime = logger.logCommand(serverName, pyHistoryCommand, workingDir);
       const result = await execCommandWithTimeout(ssh, fullCommand, {}, timeout);
-      logger.logCommandResult(serverName, `[ssh_python_as_user] user=${executionSiteUser} script_bytes=${script.length}`, startTime, result);
+      logger.logCommandResult(serverName, pyHistoryCommand, startTime, result, {
+        tool: 'ssh_python_as_user',
+        run_as_mode: 'site_user',
+        execution_user: executionSiteUser,
+        routing_reason: 'forced_site_user',
+        command_shape: 'python_script',
+        script_bytes: script.length
+      });
       auditOk(serverName, 'ssh_python_as_user', { command: '[ssh_python_as_user]', cwd: workingDir, run_as: 'site_user', site_user: executionSiteUser }, {
         code: result.code,
         success: result.code === 0,

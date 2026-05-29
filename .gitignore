@@ -65,3 +65,9 @@ id_ed25519*
 .ssh-command-history*.json
 .server-groups.json
 archived/
+
+# Runtime data — created at runtime by the app/tests, never source
+# hooks-system.js HOOKS_DIR: runtime hook scripts (and test residue)
+/hooks/
+# agent-audit triage runtime data
+/var/

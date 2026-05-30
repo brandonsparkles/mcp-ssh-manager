@@ -146,6 +146,11 @@ class SSHManager {
       timeout = 30000,
       cwd,
       rawCommand = false,
+      // Optional stdin payload: written to the remote command's stdin, then the
+      // input side is half-closed (EOF). Lets a single exec channel both receive
+      // data and run (e.g. `base64 -d > file` fed the script) instead of a
+      // separate SFTP transfer + exec.
+      stdin = null,
       // Quiet window (ms) to keep draining buffered output after the
       // foreground command has exited. See the 'exit' handler below.
       backgroundDrainMs = 250,
@@ -271,6 +276,17 @@ class SSHManager {
         stream.on('error', (err) => {
           fail(err);
         });
+
+        // Feed stdin (if any) and half-close the input side so commands that
+        // read until EOF (base64 -d, cat, etc.) complete. Errors here surface
+        // through the stream 'error' handler above.
+        if (stdin != null) {
+          try {
+            stream.end(stdin);
+          } catch (e) {
+            fail(e);
+          }
+        }
       });
     });
   }

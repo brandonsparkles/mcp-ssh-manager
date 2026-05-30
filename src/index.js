@@ -231,6 +231,11 @@ const connections = new Map();
 // Map to store connection timestamps for timeout management
 const connectionTimestamps = new Map();
 
+// Map to store the last successful liveness validation timestamp per connection.
+// We avoid probing on every command and rely on keepalive updates; this map gates
+// when we need a fallback probe before reusing a pooled connection.
+const connectionValidationTimestamps = new Map();
+
 // Connection timeout in milliseconds (30 minutes)
 const CONNECTION_TIMEOUT = 30 * 60 * 1000;
 
@@ -243,6 +248,10 @@ const KEEPALIVE_INTERVAL = 5 * 60 * 1000;
 // next command to pay a full re-handshake, which read as "the MCP doesn't keep
 // persistent connections."
 const KEEPALIVE_MAX_FAILURES = 3;
+
+// If a connection has had a successful keepalive/probe within this window, skip
+// per-command ping validation and reuse it optimistically.
+const CONNECTION_VALIDATION_MAX_AGE = KEEPALIVE_INTERVAL + 60 * 1000;
 
 // Map to store keepalive intervals
 const keepaliveIntervals = new Map();
@@ -486,6 +495,7 @@ async function execCommandWithTimeout(ssh, command, options = {}, timeoutMs = 30
             logger.warn(`Removing timed-out connection for ${name}`);
             connections.delete(name);
             connectionTimestamps.delete(name);
+            connectionValidationTimestamps.delete(name);
             if (keepaliveIntervals.has(name)) {
               clearInterval(keepaliveIntervals.get(name));
               keepaliveIntervals.delete(name);
@@ -537,8 +547,10 @@ function setupKeepalive(serverName, ssh) {
 
     if (isValid) {
       // Healthy: reset the failure streak and refresh the idle timestamp.
+      const now = Date.now();
       consecutiveFailures = 0;
-      connectionTimestamps.set(serverName, Date.now());
+      connectionTimestamps.set(serverName, now);
+      connectionValidationTimestamps.set(serverName, now);
       logger.debug('Keepalive successful', { server: serverName });
       return;
     }
@@ -590,6 +602,7 @@ function closeConnection(serverName) {
 
   // Remove timestamp
   connectionTimestamps.delete(normalizedName);
+  connectionValidationTimestamps.delete(normalizedName);
 
   // Clean up jump dependency tracking
   jumpDependencies.delete(normalizedName);
@@ -609,11 +622,14 @@ function cleanupOldConnections() {
 }
 
 // Get or create SSH connection with reconnection support
-async function getConnection(serverName) {
+async function getConnection(serverName, options = {}) {
+  const { runHooks = true } = options;
   const servers = loadServerConfig();
 
   // Execute pre-connect hook
-  await executeHook('pre-connect', { server: serverName });
+  if (runHooks) {
+    await executeHook('pre-connect', { server: serverName });
+  }
 
   // Try to resolve through aliases first
   const resolvedName = resolveServerName(serverName, servers);
@@ -633,13 +649,26 @@ async function getConnection(serverName) {
   // Check if we have an existing connection
   if (connections.has(normalizedName)) {
     const existingSSH = connections.get(normalizedName);
+    const now = Date.now();
+    const lastValidatedAt = connectionValidationTimestamps.get(normalizedName) || 0;
+    const validationAgeMs = now - lastValidatedAt;
 
-    // Verify the connection is still valid
+    // Fast path: recent keepalive/probe succeeded, so reuse without an extra
+    // ping round-trip on this request.
+    if (validationAgeMs <= CONNECTION_VALIDATION_MAX_AGE) {
+      connectionTimestamps.set(normalizedName, now);
+      logger.logConnection(serverName, 'reused', { validation: 'skipped', validationAgeMs });
+      return existingSSH;
+    }
+
+    // Validation window is stale; probe once before reuse.
     const isValid = await isConnectionValid(existingSSH);
 
     if (isValid) {
       // Update timestamp and return existing connection
-      connectionTimestamps.set(normalizedName, Date.now());
+      connectionTimestamps.set(normalizedName, now);
+      connectionValidationTimestamps.set(normalizedName, now);
+      logger.logConnection(serverName, 'reused', { validation: 'probed', validationAgeMs });
       return existingSSH;
     } else {
       // Connection is dead, remove it
@@ -673,7 +702,7 @@ async function getConnection(serverName) {
         current = servers[current]?.proxyJump?.toLowerCase() || null;
       }
 
-      const jumpSSH = await getConnection(serverConfig.proxyJump);
+      const jumpSSH = await getConnection(serverConfig.proxyJump, { runHooks });
       const stream = await jumpSSH.forwardOut(
         '127.0.0.1', 0,
         serverConfig.host, serverConfig.port || 22
@@ -692,8 +721,10 @@ async function getConnection(serverName) {
     } else {
       await ssh.connect();
     }
+    const now = Date.now();
     connections.set(normalizedName, ssh);
-    connectionTimestamps.set(normalizedName, Date.now());
+    connectionTimestamps.set(normalizedName, now);
+    connectionValidationTimestamps.set(normalizedName, now);
 
     // Setup keepalive
     setupKeepalive(normalizedName, ssh);
@@ -707,11 +738,15 @@ async function getConnection(serverName) {
     });
 
     // Execute post-connect hook
-    await executeHook('post-connect', { server: serverName });
+    if (runHooks) {
+      await executeHook('post-connect', { server: serverName });
+    }
   } catch (error) {
     logger.logConnection(serverName, 'failed', { error: error.message });
     // Execute error hook
-    await executeHook('on-error', { server: serverName, error: error.message });
+    if (runHooks) {
+      await executeHook('on-error', { server: serverName, error: error.message });
+    }
     throw new Error(`Failed to connect to ${serverName}: ${error.message}`);
   }
 
@@ -4999,7 +5034,6 @@ registerToolConditional(
   },
   async ({ server: serverName, site_user, script, cwd, timeout = 300000 }) => {
     let ssh = null;
-    let localTempDir = null;
     let remoteTempFile = null;
 
     try {
@@ -5024,15 +5058,18 @@ registerToolConditional(
       );
       if (denied) return denied;
 
-      localTempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'mcp-python-'));
-      const localScriptPath = path.join(localTempDir, 'script.py');
-      fs.writeFileSync(localScriptPath, script, { mode: 0o600 });
+      // Single-channel transfer: stream the script to the host as base64 over the
+      // exec channel's stdin (decoded server-side into a root-owned temp file),
+      // instead of a separate SFTP putFile + exec. One channel open instead of
+      // two, no local temp file, and the script bytes never enter the command
+      // string — so the single-quote / heredoc corruption risk that motivated
+      // this tool cannot occur.
+      const scriptBase64 = Buffer.from(script, 'utf8').toString('base64');
 
       remoteTempFile = `/tmp/mcp_py_${Date.now()}_${Math.random().toString(36).slice(2, 8)}.py`;
-      await ssh.putFile(localScriptPath, remoteTempFile);
-
       const cdPart = workingDir ? `cd ${shellQuote(workingDir)} && ` : '';
       const fullCommand = [
+        `base64 -d > ${shellQuote(remoteTempFile)}`,
         `chmod 600 ${shellQuote(remoteTempFile)}`,
         `chown ${shellQuote(`${executionSiteUser}:${executionSiteUser}`)} ${shellQuote(remoteTempFile)}`,
         `${cdPart}sudo -u ${shellQuote(executionSiteUser)} python3 ${shellQuote(remoteTempFile)}`,
@@ -5040,7 +5077,7 @@ registerToolConditional(
 
       const pyHistoryCommand = `[ssh_python_as_user] run_as=site_user user=${executionSiteUser} shape=python_script script_bytes=${script.length}`;
       const startTime = logger.logCommand(serverName, pyHistoryCommand, workingDir);
-      const result = await execCommandWithTimeout(ssh, fullCommand, {}, timeout);
+      const result = await execCommandWithTimeout(ssh, fullCommand, { stdin: scriptBase64 }, timeout);
       logger.logCommandResult(serverName, pyHistoryCommand, startTime, result, {
         tool: 'ssh_python_as_user',
         run_as_mode: 'site_user',
@@ -5078,10 +5115,6 @@ registerToolConditional(
           text: `❌ Error: ${error.message}`
         }]
       };
-    } finally {
-      if (localTempDir) {
-        fs.rmSync(localTempDir, { recursive: true, force: true });
-      }
     }
   }
 );

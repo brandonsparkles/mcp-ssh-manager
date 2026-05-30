@@ -29,6 +29,25 @@ function shellJoin(values) {
   return values.map(shellQuote).join(' ');
 }
 
+function yamlDoubleQuote(value) {
+  return `"${String(value)
+    .replace(/\\/g, '\\\\')
+    .replace(/"/g, '\\"')
+    .replace(/\n/g, '\\n')
+    .replace(/\r/g, '\\r')}"`;
+}
+
+function withMongoPasswordConfig(command, password, configPath) {
+  if (!password) {
+    return command;
+  }
+
+  const config = `password: ${yamlDoubleQuote(password)}\n`;
+  const writeConfig = `umask 077 && printf %s ${shellQuote(config)} > ${shellQuote(configPath)}`;
+
+  return `${writeConfig} && ${command}; status=$?; rm -f ${shellQuote(configPath)}; exit $status`;
+}
+
 /**
  * Generate unique backup ID
  */
@@ -154,13 +173,14 @@ export function buildMongoDBDumpCommand(options) {
     compress = true
   } = options;
 
+  const configPath = `${outputDir}.mongodump.yml`;
   let command = 'mongodump';
+  if (password) command += ` --config ${shellQuote(configPath)}`;
 
   // Connection parameters
   if (host) command += ` --host ${shellQuote(host)}`;
   if (port) command += ` --port ${shellQuote(port)}`;
   if (user) command += ` --username ${shellQuote(user)}`;
-  if (password) command += ` --password ${shellQuote(password)}`;
 
   // Database selection
   if (database) command += ` --db ${shellQuote(database)}`;
@@ -175,7 +195,7 @@ export function buildMongoDBDumpCommand(options) {
     command += ` && rm -rf ${shellQuote(outputDir)}`;
   }
 
-  return command;
+  return withMongoPasswordConfig(command, password, configPath);
 }
 
 /**
@@ -317,6 +337,7 @@ function buildMongoDBRestoreCommand(backupFile, options) {
     drop = true
   } = options;
 
+  const configPath = `${backupFile}.mongorestore.yml`;
   let command = '';
 
   // Extract if compressed
@@ -324,26 +345,26 @@ function buildMongoDBRestoreCommand(backupFile, options) {
     const extractDir = backupFile.replace('.tar.gz', '');
     command = `tar -xzf ${shellQuote(backupFile)} -C ${shellQuote(path.posix.dirname(backupFile))} && `;
     command += 'mongorestore';
+    if (password) command += ` --config ${shellQuote(configPath)}`;
 
     if (drop) command += ' --drop';
     if (host) command += ` --host ${shellQuote(host)}`;
     if (port) command += ` --port ${shellQuote(port)}`;
     if (user) command += ` --username ${shellQuote(user)}`;
-    if (password) command += ` --password ${shellQuote(password)}`;
 
     command += ` ${shellQuote(extractDir)}`;
     command += ` && rm -rf ${shellQuote(extractDir)}`;
   } else {
     command = 'mongorestore';
+    if (password) command += ` --config ${shellQuote(configPath)}`;
     if (drop) command += ' --drop';
     if (host) command += ` --host ${shellQuote(host)}`;
     if (port) command += ` --port ${shellQuote(port)}`;
     if (user) command += ` --username ${shellQuote(user)}`;
-    if (password) command += ` --password ${shellQuote(password)}`;
     command += ` ${shellQuote(backupFile)}`;
   }
 
-  return command;
+  return withMongoPasswordConfig(command, password, configPath);
 }
 
 /**

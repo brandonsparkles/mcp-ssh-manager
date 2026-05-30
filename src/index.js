@@ -237,6 +237,13 @@ const CONNECTION_TIMEOUT = 30 * 60 * 1000;
 // Keepalive interval in milliseconds (5 minutes)
 const KEEPALIVE_INTERVAL = 5 * 60 * 1000;
 
+// Consecutive failed keepalive probes tolerated before a pooled connection is
+// considered dead. A single transient probe failure (server under load, brief
+// socket blip) must NOT discard a healthy warm connection — doing so forced the
+// next command to pay a full re-handshake, which read as "the MCP doesn't keep
+// persistent connections."
+const KEEPALIVE_MAX_FAILURES = 3;
+
 // Map to store keepalive intervals
 const keepaliveIntervals = new Map();
 
@@ -459,7 +466,7 @@ async function execCommandWithTimeout(ssh, command, options = {}, timeoutMs = 30
 
     // Wrap command with timeout command (works on Linux/Mac when binary exists)
     const timeoutSeconds = Math.ceil(timeoutMs / 1000);
-    const escapedCommand = command.replace(/'/g, "'\\''");
+    const escapedCommand = command.replace(/'/g, '\'\\\'\'');
     const wrappedCommand = `${timeoutBinary} ${timeoutSeconds} sh -c '${escapedCommand}'`;
 
     try {
@@ -514,20 +521,50 @@ function setupKeepalive(serverName, ssh) {
     clearInterval(keepaliveIntervals.get(serverName));
   }
 
+  // Tolerate transient probe failures: only tear down after
+  // KEEPALIVE_MAX_FAILURES *consecutive* failed probes, so one blip does not
+  // discard a warm connection.
+  let consecutiveFailures = 0;
+
   // Set up new keepalive interval
   const interval = setInterval(async () => {
+    let isValid = false;
     try {
-      const isValid = await isConnectionValid(ssh);
-      if (!isValid) {
-        logger.warn(`Connection to ${serverName} lost, will reconnect on next use`);
-        closeConnection(serverName);
-      } else {
-        // Update timestamp on successful keepalive
-        connectionTimestamps.set(serverName, Date.now());
-        logger.debug('Keepalive successful', { server: serverName });
-      }
+      isValid = await isConnectionValid(ssh);
     } catch (error) {
-      logger.error(`Keepalive failed for ${serverName}`, { error: error.message });
+      logger.error(`Keepalive probe errored for ${serverName}`, { error: error.message });
+    }
+
+    if (isValid) {
+      // Healthy: reset the failure streak and refresh the idle timestamp.
+      consecutiveFailures = 0;
+      connectionTimestamps.set(serverName, Date.now());
+      logger.debug('Keepalive successful', { server: serverName });
+      return;
+    }
+
+    consecutiveFailures += 1;
+    logger.warn(
+      `Keepalive probe failed for ${serverName} (${consecutiveFailures}/${KEEPALIVE_MAX_FAILURES})`
+    );
+    if (consecutiveFailures < KEEPALIVE_MAX_FAILURES) {
+      return; // give it another interval before giving up
+    }
+
+    // Persistently unhealthy: drop it and proactively re-establish in the
+    // background so the warm pool is restored before the next command, instead
+    // of making the user wait for a lazy reconnect. closeConnection() clears
+    // THIS interval; getConnection() installs a fresh connection + keepalive.
+    logger.warn(`Connection to ${serverName} lost after ${consecutiveFailures} failed probes, reconnecting`);
+    closeConnection(serverName);
+    try {
+      await getConnection(serverName);
+      logger.info(`Proactively reconnected to ${serverName}`);
+    } catch (error) {
+      logger.warn(
+        `Proactive reconnect to ${serverName} failed, will retry on next use`,
+        { error: error.message }
+      );
     }
   }, KEEPALIVE_INTERVAL);
 

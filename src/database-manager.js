@@ -26,6 +26,26 @@ function shellJoin(values) {
   return values.map(shellQuote).join(' ');
 }
 
+function yamlDoubleQuote(value) {
+  return `"${String(value)
+    .replace(/\\/g, '\\\\')
+    .replace(/"/g, '\\"')
+    .replace(/\n/g, '\\n')
+    .replace(/\r/g, '\\r')}"`;
+}
+
+function withMongoPasswordConfig(command, password, configPath) {
+  if (!password) {
+    return command;
+  }
+
+  const config = `password: ${yamlDoubleQuote(password)}\n`;
+  const encodedConfig = Buffer.from(config, 'utf8').toString('base64');
+  const writeConfig = `umask 077 && printf %s ${shellQuote(encodedConfig)} | base64 -d > ${shellQuote(configPath)}`;
+
+  return `${writeConfig} && ${command}; status=$?; rm -f ${shellQuote(configPath)}; exit $status`;
+}
+
 function posixDirname(value) {
   const text = String(value);
   const index = text.lastIndexOf('/');
@@ -152,11 +172,12 @@ export function buildMongoDBDumpCommand(options) {
     collections = null
   } = options;
 
+  const configPath = `${outputDir}.mongodump.yml`;
   let command = 'mongodump';
+  if (password) command += ` --config ${shellQuote(configPath)}`;
   if (host) command += ` --host ${shellQuote(host)}`;
   if (port) command += ` --port ${shellQuote(port)}`;
   if (user) command += ` --username ${shellQuote(user)}`;
-  if (password) command += ` --password ${shellQuote(password)}`;
   if (database) command += ` --db ${shellQuote(database)}`;
 
   if (collections && Array.isArray(collections)) {
@@ -172,7 +193,7 @@ export function buildMongoDBDumpCommand(options) {
     command += ` && rm -rf ${shellQuote(outputDir)}`;
   }
 
-  return command;
+  return withMongoPasswordConfig(command, password, configPath);
 }
 
 /**

@@ -43,7 +43,8 @@ function withMongoPasswordConfig(command, password, configPath) {
   }
 
   const config = `password: ${yamlDoubleQuote(password)}\n`;
-  const writeConfig = `umask 077 && printf %s ${shellQuote(config)} > ${shellQuote(configPath)}`;
+  const encodedConfig = Buffer.from(config, 'utf8').toString('base64');
+  const writeConfig = `umask 077 && printf %s ${shellQuote(encodedConfig)} | base64 -d > ${shellQuote(configPath)}`;
 
   return `${writeConfig} && ${command}; status=$?; rm -f ${shellQuote(configPath)}; exit $status`;
 }

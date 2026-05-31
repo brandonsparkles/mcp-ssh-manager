@@ -29,7 +29,7 @@ export const COMMON_SERVICES = {
 // command, escaping any embedded single quotes. Matches the helper used in
 // ssh-manager.js / database-manager.js.
 function shellQuote(value) {
-  const quote = "'";
+  const quote = '\'';
   return quote + String(value).replace(/'/g, quote + '\\' + quote + quote) + quote;
 }
 
